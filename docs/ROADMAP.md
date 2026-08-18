@@ -5,6 +5,17 @@
 - [x] v0.3 Agentic runtime (reference implementation)
 - [x] v0.4 Evidence Intelligence + Cognitive Voice (reference implementation)
 - [x] v0.5 Android-first native foundation
+- [x] v0.5.1 Android conversation + voice hardening
+- [x] v0.5.2 Configurable HTTPS model runtime
+  - [x] provider abstraction
+  - [x] OpenAI-compatible HTTPS chat adapter
+  - [x] BYOK API key held in volatile memory only
+  - [x] connection test and Android provider settings
+  - [x] model inference off the UI thread
+  - [x] factual model drafts routed through ClaimLock
+  - [x] unsupported factual model output withheld
+  - [x] creative/transformation output visibly labeled GENERATED
+  - [ ] live-provider device validation with user-supplied credentials
 - [ ] v0.6 Deep Semantic Verification
 - [ ] v0.7 Cognitive Executive
 - [ ] v0.8 Multi-Agent Cognitive Workforce
