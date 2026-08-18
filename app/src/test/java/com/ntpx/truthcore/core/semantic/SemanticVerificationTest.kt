@@ -1,6 +1,8 @@
 package com.ntpx.truthcore.core.semantic
 
 import com.ntpx.truthcore.core.evidence.Evidence
+import com.ntpx.truthcore.core.truth.ClaimAssessment
+import com.ntpx.truthcore.core.truth.ClaimLock
 import java.time.Instant
 import org.junit.Assert.*
 import org.junit.Test
@@ -35,6 +37,28 @@ class SemanticVerificationTest {
             SemanticScore(true, entailment = 0.6, contradiction = 0.9, provider = "fixture", reason = "test")
         })
         assertFalse(DeepVerificationGate(verifier).assess("claim", Evidence("1", "s", "evidence")).releasable)
+    }
+
+    @Test fun claimLockCanRequireSemanticVerification() {
+        val evidence = listOf(Evidence("1", "s", "Paris is in France", trust = 1.0))
+        val passGate = DeepVerificationGate(SemanticVerifier(NliProvider { _, _ ->
+            SemanticScore(true, entailment = 0.99, contradiction = 0.0, provider = "fixture", reason = "test")
+        }))
+        val passed = ClaimLock.verify("Paris is in France [S1].", evidence, semanticGate = passGate, requireSemantic = true)
+        assertEquals(ClaimAssessment.Status.SUPPORTED, passed.claims.single().status)
+
+        val absentGate = DeepVerificationGate(SemanticVerifier())
+        val withheld = ClaimLock.verify("Paris is in France [S1].", evidence, semanticGate = absentGate, requireSemantic = true)
+        assertEquals(ClaimAssessment.Status.UNSUPPORTED, withheld.claims.single().status)
+    }
+
+    @Test fun semanticContradictionBlocksClaimLockEvenWhenLexicalOverlapIsHigh() {
+        val evidence = listOf(Evidence("1", "s", "Paris is in France", trust = 1.0))
+        val gate = DeepVerificationGate(SemanticVerifier(NliProvider { _, _ ->
+            SemanticScore(true, entailment = 0.85, contradiction = 0.95, provider = "fixture", reason = "test")
+        }))
+        val result = ClaimLock.verify("Paris is in France [S1].", evidence, semanticGate = gate)
+        assertEquals(ClaimAssessment.Status.CONTRADICTED, result.claims.single().status)
     }
 
     @Test fun embeddingIndexFailsClosedAndCanSearchWhenProviderExists() {
