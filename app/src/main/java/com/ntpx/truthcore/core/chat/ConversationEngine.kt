@@ -13,19 +13,19 @@ class ConversationEngine {
     private val localEvidence = listOf(
         Evidence(
             id = "local-architecture",
-            title = "TruthCore architecture",
+            label = "TruthCore architecture",
             content = "TruthCore uses ClaimLock to withhold unsupported factual claims. ClaimLock is active in TruthCore.",
             trust = 1.0,
         ),
         Evidence(
             id = "local-capabilities",
-            title = "TruthCore Android capabilities",
+            label = "TruthCore Android capabilities",
             content = "TruthCore Android is running locally. TruthCore v0.5.1 includes a native Android interface, microphone speech recognition, text to speech, local ClaimLock verification, evidence primitives, and memory primitives.",
             trust = 1.0,
         ),
         Evidence(
             id = "local-provider-status",
-            title = "TruthCore model provider status",
+            label = "TruthCore model provider status",
             content = "TruthCore does not yet have a production model provider connected in v0.5.1.",
             trust = 1.0,
         ),
