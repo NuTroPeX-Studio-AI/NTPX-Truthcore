@@ -11,8 +11,8 @@ android {
         applicationId = "com.ntpx.truthcore"
         minSdk = 28
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.5.0-alpha01"
+        versionCode = 2
+        versionName = "0.5.1-alpha01"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
