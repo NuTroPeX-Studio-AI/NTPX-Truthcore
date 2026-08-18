@@ -1,6 +1,6 @@
 # NTPX TruthCore Web
 
-TruthCore Web is the browser/web-server sibling of the native Android app. It includes a public marketing site at `/`, an installable web app at `/app`, a zero-dependency Node server, browser voice controls when supported, and a JavaScript port of the deterministic ClaimLock/evidence boundary.
+TruthCore Web is the browser/server sibling of the native Android app. v1.0.0-rc1 includes the public site at `/`, the installable PWA at `/app`, browser-local memory/knowledge/audit storage, dynamic RAG evidence, bounded agent tools, multi-agent review, ClaimLock, fail-closed semantic adapter contracts, browser voice controls when available, and the server-side HTTPS model proxy.
 
 ## Run locally
 
@@ -11,24 +11,32 @@ npm run check
 TRUTHCORE_ALLOWED_PROVIDER_HOSTS=api.example.com npm start
 ```
 
-Open `http://localhost:8787` for the website or `http://localhost:8787/app` for the app.
+Open `http://localhost:8787` for the website or `http://localhost:8787/app` for the application.
+
+## Useful app commands
+
+- `remember that <text>` → proposes a persistent browser-memory write
+- `approve <token>` → executes one pending write
+- `what do you remember about <topic>`
+- `search knowledge for <topic>`
+- `add knowledge: <label> | <content>` → approval gated
+- `agent: <goal>` → bounded registered-tool planning/execution
+- `team: <goal>` → planner + critic + reviewer, labeled `TEAM_GENERATED`
+- `list tools`
+- `audit status`
 
 ## Model proxy security
 
-The web server does **not** proxy arbitrary provider URLs by default. Provider hosts must be listed in `TRUTHCORE_ALLOWED_PROVIDER_HOSTS` as a comma-separated set of hostnames. Example:
+Provider hosts must be listed in `TRUTHCORE_ALLOWED_PROVIDER_HOSTS`. The server rejects cleartext URLs, embedded credentials, localhost/local-network targets, common metadata targets, and destinations resolving to private/reserved addresses.
 
-```bash
-TRUTHCORE_ALLOWED_PROVIDER_HOSTS=api.example.com,another-provider.example npm start
-```
-
-`*` is supported only as an explicit operator override and is not recommended for a public deployment. The server blocks cleartext URLs, embedded URL credentials, localhost/local-network targets, common metadata targets, and provider hosts resolving to private/reserved IP addresses.
-
-The browser keeps the BYOK API key only in the current tab's JavaScript memory. It is not written to localStorage, cookies, IndexedDB, the service worker cache, or the GitHub repository.
+The browser keeps the provider API key only in the current tab's JavaScript runtime. It is not written to localStorage, cookies, IndexedDB, service-worker cache, or the Git repository. IndexedDB stores only user-approved memory/knowledge and the browser-local audit chain.
 
 ## Truth boundary
 
-Creative/transformation requests may be returned as `GENERATED`. Factual model drafts remain untrusted and pass through ClaimLock against the evidence packet. Unsupported factual output is withheld as `ABSTAINED`.
+Creative/transformation output is labeled `GENERATED`; multi-agent review is labeled `TEAM_GENERATED`. Factual model drafts remain untrusted and pass through ClaimLock against a bounded evidence packet. Retrieved text is sanitized before model use, and unsupported/contradicted facts are withheld as `ABSTAINED`.
 
-## Deployment shape
+The semantic/NLI and embedding interfaces fail closed until an explicit provider is installed; no confidence is invented in their absence.
 
-The static website and app shell can be served by any web host, but the full model-connected app needs the Node server (or an equivalent serverless adapter) because provider credentials should not be embedded into a public static bundle.
+## Deployment
+
+`Dockerfile` packages the full Node/PWA runtime. Static hosting alone can display the public shell, but the connected model app needs the Node server (or a deliberately equivalent server-side adapter) so provider routing and host-policy enforcement stay off the public client.

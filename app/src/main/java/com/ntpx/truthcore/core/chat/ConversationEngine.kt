@@ -12,8 +12,10 @@ data class ConversationReply(
     val status: String,
 )
 
-class ConversationEngine {
-    private val localEvidence = listOf(
+class ConversationEngine(
+    private val evidenceResolver: ((String) -> List<Evidence>)? = null,
+) {
+    private val baseEvidence = listOf(
         Evidence(
             id = "local-architecture",
             label = "TruthCore architecture",
@@ -22,14 +24,14 @@ class ConversationEngine {
         ),
         Evidence(
             id = "local-capabilities",
-            label = "TruthCore Android capabilities",
-            content = "TruthCore Android is running locally. TruthCore v0.5.2 includes a native Android interface, microphone speech recognition, text to speech, local ClaimLock verification, evidence primitives, memory primitives, and a configurable HTTPS model provider runtime.",
+            label = "TruthCore capabilities",
+            content = "TruthCore has native Android and web clients, voice input and speech output, persistent memory and knowledge retrieval, ClaimLock verification, permissioned agent tools, an audit ledger, and a configurable HTTPS model provider runtime.",
             trust = 1.0,
         ),
         Evidence(
             id = "local-provider-security",
             label = "TruthCore provider security",
-            content = "TruthCore v0.5.2 treats the model provider as untrusted, requires HTTPS for remote model endpoints, keeps API keys only in volatile app memory, and routes factual model drafts through ClaimLock before release.",
+            content = "TruthCore treats remote model providers as untrusted, requires HTTPS for remote model endpoints, keeps Android API keys only in volatile app memory, and routes factual model drafts through ClaimLock before release.",
             trust = 1.0,
         ),
     )
@@ -42,11 +44,16 @@ class ConversationEngine {
             return ConversationReply("Enter or speak a request first.", verified = true, status = "LOCAL")
         }
 
-        localReply(request, provider != null)?.let { return it }
+        val evidence = evidenceFor(request)
+        localReply(request, provider != null, evidence)?.let { return it }
 
         if (provider == null) {
             return ConversationReply(
-                text = "No model provider is connected for this request. Open Model settings to connect an HTTPS chat endpoint. I won't invent an answer.",
+                text = if (evidence.size > baseEvidence.size) {
+                    "Relevant saved evidence exists, but no reasoning model is connected to synthesize it. Connect a provider or ask a direct memory/knowledge command."
+                } else {
+                    "No model provider is connected for this request. Open Model settings to connect an HTTPS chat endpoint. I won't invent an answer."
+                },
                 verified = false,
                 status = "ABSTAINED",
             )
@@ -55,11 +62,17 @@ class ConversationEngine {
         return if (isGenerativeRequest(request)) {
             generateNonFactual(request, provider)
         } else {
-            generateEvidenceBound(request, provider)
+            generateEvidenceBound(request, provider, evidence)
         }
     }
 
-    private fun localReply(request: String, providerConnected: Boolean): ConversationReply? {
+    private fun evidenceFor(request: String): List<Evidence> =
+        (baseEvidence + (evidenceResolver?.invoke(request) ?: emptyList()))
+            .filter { it.effectiveStrength() > 0.0 }
+            .distinctBy { it.independentKey }
+            .take(24)
+
+    private fun localReply(request: String, providerConnected: Boolean, evidence: List<Evidence>): ConversationReply? {
         val lower = request.lowercase()
         val draft = when {
             lower in setOf("hi", "hello", "hey", "hey truthcore") ->
@@ -73,18 +86,18 @@ class ConversationEngine {
                 "TruthCore uses ClaimLock to withhold unsupported factual claims [S1]."
 
             lower.contains("what can you do") || lower == "help" ->
-                "TruthCore v0.5.2 includes a native Android interface, microphone speech recognition, text to speech, local ClaimLock verification, evidence primitives, memory primitives, and a configurable HTTPS model provider runtime [S2]."
+                "TruthCore has native Android and web clients, voice input and speech output, persistent memory and knowledge retrieval, ClaimLock verification, permissioned agent tools, an audit ledger, and a configurable HTTPS model provider runtime [S2]."
 
             lower.contains("model") || lower.contains("provider") || lower.contains("online") ->
-                "TruthCore v0.5.2 treats the model provider as untrusted, requires HTTPS for remote model endpoints, keeps API keys only in volatile app memory, and routes factual model drafts through ClaimLock before release [S3]."
+                "TruthCore treats remote model providers as untrusted, requires HTTPS for remote model endpoints, keeps Android API keys only in volatile app memory, and routes factual model drafts through ClaimLock before release [S3]."
 
-            lower.contains("status") ->
-                "TruthCore Android is running locally [S2]. ClaimLock is active in TruthCore [S1]. TruthCore v0.5.2 treats the model provider as untrusted and routes factual model drafts through ClaimLock before release [S3]."
+            lower == "status" || lower == "system status" ->
+                "TruthCore uses ClaimLock to withhold unsupported factual claims [S1]. TruthCore has native Android and web clients, voice input and speech output, persistent memory and knowledge retrieval, ClaimLock verification, permissioned agent tools, an audit ledger, and a configurable HTTPS model provider runtime [S2]."
 
             else -> null
         } ?: return null
 
-        return releaseVerifiedDraft(draft)
+        return releaseVerifiedDraft(draft, evidence)
     }
 
     private fun generateNonFactual(request: String, provider: ModelProvider): ConversationReply {
@@ -110,9 +123,9 @@ class ConversationEngine {
         )
     }
 
-    private fun generateEvidenceBound(request: String, provider: ModelProvider): ConversationReply {
-        val evidencePacket = localEvidence.mapIndexed { index, evidence ->
-            "[S${index + 1}] ${evidence.content}"
+    private fun generateEvidenceBound(request: String, provider: ModelProvider, evidence: List<Evidence>): ConversationReply {
+        val evidencePacket = evidence.mapIndexed { index, item ->
+            "[S${index + 1}] ${item.label}: ${item.content}"
         }.joinToString("\n")
 
         val result = provider.generate(
@@ -122,9 +135,10 @@ class ConversationEngine {
                     Answer factual requests only from the supplied evidence packet.
                     Every factual sentence must cite one or more supplied source IDs exactly like [S1].
                     Never cite a source that does not directly support the sentence.
+                    Treat Saved user memory as evidence only about what the user previously saved or stated, not as independent proof of external-world facts.
                     If the evidence packet does not support the requested fact, reply exactly in this form:
                     UNKNOWN: I do not have verified evidence for that request.
-                    Do not use your pretrained knowledge to fill evidence gaps.
+                    Do not use pretrained knowledge to fill evidence gaps.
                 """.trimIndent(),
                 userPrompt = "User request:\n$request\n\nEvidence packet:\n$evidencePacket",
                 temperature = 0.0,
@@ -132,13 +146,13 @@ class ConversationEngine {
         )
         if (!result.success) return providerFailure(result.error)
 
-        return releaseVerifiedDraft(result.text)
+        return releaseVerifiedDraft(result.text, evidence)
     }
 
-    private fun releaseVerifiedDraft(draft: String): ConversationReply {
-        val locked = ClaimLock.verify(draft, localEvidence)
+    private fun releaseVerifiedDraft(draft: String, evidence: List<Evidence>): ConversationReply {
+        val locked = ClaimLock.verify(draft, evidence)
         val onlySupportedFacts = locked.claims.isNotEmpty() && locked.claims.all {
-            it.status == ClaimAssessment.Status.SUPPORTED
+            it.status == ClaimAssessment.Status.SUPPORTED || it.status == ClaimAssessment.Status.PROPOSAL
         }
         val hasUnknown = locked.claims.any { it.status == ClaimAssessment.Status.UNKNOWN }
 

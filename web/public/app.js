@@ -1,3 +1,12 @@
+import {
+  addKnowledge,
+  evidenceFor,
+  remember,
+  searchKnowledge,
+  searchMemory,
+  verifyAuditChain,
+} from "/store.js";
+
 const elements = {
   messages: document.querySelector("#messages"),
   input: document.querySelector("#messageInput"),
@@ -23,9 +32,10 @@ const state = {
   busy: false,
   recognition: null,
   deferredInstall: null,
+  pending: new Map(),
 };
 
-addMessage("TruthCore", "TruthCore Web is ready. Ask “status” or “help”, or connect a model provider in Model settings. Unsupported factual answers are withheld instead of guessed.", "LOCAL");
+addMessage("TruthCore", "TruthCore Web v1 runtime is ready. ClaimLock, persistent local memory/knowledge, bounded browser tools, multi-agent review, and the local audit chain are active. Connect a model for open-ended reasoning.", "LOCAL");
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
@@ -93,10 +103,32 @@ async function submit() {
   addMessage("You", message, null, true);
   setBusy(true);
   try {
+    const local = await handleLocalCommand(message);
+    if (local) {
+      addMessage("TruthCore", local.text, local.status);
+      if (elements.speak.checked) speak(local.text);
+      return;
+    }
+
+    if (/^(team:|\/team\s+|review team:\s*)/i.test(message)) {
+      const reply = await runTeam(message.replace(/^(team:|\/team\s+|review team:\s*)/i, "").trim());
+      addMessage("TruthCore", reply.text, reply.status);
+      if (elements.speak.checked) speak(reply.text);
+      return;
+    }
+
+    if (/^(agent:|\/agent\s+|do:\s+)/i.test(message)) {
+      const reply = await runAgent(message.replace(/^(agent:|\/agent\s+|do:\s+)/i, "").trim());
+      addMessage("TruthCore", reply.text, reply.status);
+      if (elements.speak.checked) speak(reply.text);
+      return;
+    }
+
+    const clientEvidence = await evidenceFor(message);
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ message, provider: state.provider }),
+      body: JSON.stringify({ message, provider: state.provider, clientEvidence }),
     });
     const reply = await response.json();
     if (!response.ok) throw new Error(reply.error || "TruthCore request failed");
@@ -107,6 +139,139 @@ async function submit() {
   } finally {
     setBusy(false);
   }
+}
+
+async function handleLocalCommand(message) {
+  const lower = message.toLowerCase();
+  if (lower.startsWith("remember that ")) {
+    return proposeWrite({ tool: "memory.remember", args: { content: message.slice(14).trim() } });
+  }
+  if (lower.startsWith("add knowledge: ")) {
+    const body = message.slice(message.indexOf(":") + 1).trim();
+    const label = body.split("|")[0]?.trim() || "";
+    const content = body.includes("|") ? body.slice(body.indexOf("|") + 1).trim() : "";
+    return proposeWrite({ tool: "knowledge.add", args: { label, content } });
+  }
+  if (lower.startsWith("approve ")) {
+    return executeApproval(message.slice(8).trim());
+  }
+  if (lower.startsWith("what do you remember about ") || lower.startsWith("search memory for ")) {
+    const query = lower.startsWith("what do you remember about ") ? message.slice(27).trim() : message.slice(18).trim();
+    const rows = await searchMemory(query);
+    return { text: rows.length ? rows.map((row) => `• ${row.content}`).join("\n") : "No matching memory.", status: "LOCAL" };
+  }
+  if (lower.startsWith("search knowledge for ")) {
+    const rows = await searchKnowledge(message.slice(21).trim());
+    return { text: rows.length ? rows.map((row) => `• ${row.label}: ${row.content}`).join("\n") : "No matching knowledge.", status: "LOCAL" };
+  }
+  if (lower === "audit status" || lower === "verify audit") {
+    const valid = await verifyAuditChain();
+    return { text: valid ? "The browser-local TruthCore audit hash chain is internally consistent." : "The browser-local TruthCore audit hash chain failed verification.", status: valid ? "LOCAL" : "ALERT" };
+  }
+  if (lower === "list tools" || lower === "tools") {
+    return { text: "clock.now [READ_ONLY]\nmemory.search [READ_ONLY]\nknowledge.search [READ_ONLY]\nmemory.remember [WRITE_LOCAL]\nknowledge.add [WRITE_LOCAL]", status: "LOCAL" };
+  }
+  return null;
+}
+
+function proposeWrite(call) {
+  if (!Object.values(call.args).some((value) => String(value).trim())) {
+    return { text: "The requested write is empty.", status: "ACTION_FAILED" };
+  }
+  const token = crypto.randomUUID();
+  state.pending.set(token, call);
+  return { text: `Approval required for ${call.tool}. Type or say: approve ${token}`, status: "APPROVAL_REQUIRED" };
+}
+
+async function executeApproval(token) {
+  const call = state.pending.get(token);
+  if (!call) return { text: "No pending action for that approval token.", status: "ACTION_DENIED" };
+  state.pending.delete(token);
+  if (call.tool === "memory.remember") {
+    const record = await remember(call.args.content);
+    return { text: `Saved memory ${record.id}.`, status: "ACTION_EXECUTED" };
+  }
+  if (call.tool === "knowledge.add") {
+    const record = await addKnowledge(call.args.label, call.args.content);
+    return { text: `Saved knowledge ${record.id}.`, status: "ACTION_EXECUTED" };
+  }
+  return { text: "The pending tool is no longer allowed.", status: "ACTION_DENIED" };
+}
+
+async function runTeam(goal) {
+  if (!state.provider) return { text: "A model provider is required for the multi-agent review team.", status: "ABSTAINED" };
+  const response = await fetch("/api/team", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal, provider: state.provider }),
+  });
+  const body = await response.json();
+  if (!response.ok || !body.ok) return { text: body.error || "Team review failed.", status: body.status || "PROVIDER_ERROR" };
+  return { text: body.text, status: body.status || "TEAM_GENERATED" };
+}
+
+async function runAgent(task) {
+  if (!state.provider) return { text: "A model provider is required to plan agent tasks.", status: "ABSTAINED" };
+  const response = await fetch("/api/agent/plan", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ task, provider: state.provider }),
+  });
+  const body = await response.json();
+  if (!response.ok || !body.ok) return { text: body.error || "Agent planning failed.", status: "PROVIDER_ERROR" };
+  const calls = parseToolCalls(body.plan).slice(0, 4);
+  if (!calls.length) return { text: "The planner did not produce an executable registered-tool plan.", status: "ABSTAINED" };
+
+  const results = [];
+  for (const call of calls) {
+    if (["memory.remember", "knowledge.add"].includes(call.tool)) return proposeWrite(call);
+    const result = await executeReadOnlyTool(call);
+    if (!result.ok) return { text: result.output, status: "ACTION_FAILED" };
+    results.push(`${call.tool}: ${result.output}`);
+  }
+
+  const finalResponse = await fetch("/api/agent/finalize", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ task, provider: state.provider, results }),
+  });
+  const finalBody = await finalResponse.json();
+  return finalResponse.ok && finalBody.ok
+    ? { text: finalBody.text, status: "ACTION_EXECUTED" }
+    : { text: results.join("\n"), status: "ACTION_EXECUTED" };
+}
+
+function parseToolCalls(plan) {
+  return String(plan).split(/\r?\n/).map((raw) => {
+    const line = raw.trim();
+    if (!/^TOOL\s+/i.test(line)) return null;
+    const body = line.replace(/^TOOL\s+/i, "");
+    const firstSpace = body.indexOf(" ");
+    const tool = (firstSpace < 0 ? body : body.slice(0, firstSpace)).trim();
+    if (!/^[a-z0-9_.-]+$/.test(tool)) return null;
+    const argsText = firstSpace < 0 ? "" : body.slice(firstSpace + 1);
+    const args = Object.fromEntries(argsText.split(";").map((part) => {
+      const at = part.indexOf("=");
+      if (at < 1) return null;
+      const key = part.slice(0, at).trim();
+      const value = part.slice(at + 1).trim();
+      return /^[a-zA-Z0-9_.-]+$/.test(key) && value ? [key, value] : null;
+    }).filter(Boolean));
+    return { tool, args };
+  }).filter(Boolean);
+}
+
+async function executeReadOnlyTool(call) {
+  if (call.tool === "clock.now") return { ok: true, output: new Date().toISOString() };
+  if (call.tool === "memory.search") {
+    const rows = await searchMemory(call.args.query || "");
+    return { ok: true, output: rows.map((row) => row.content).join("\n") || "No matching memory." };
+  }
+  if (call.tool === "knowledge.search") {
+    const rows = await searchKnowledge(call.args.query || "");
+    return { ok: true, output: rows.map((row) => `${row.label}: ${row.content}`).join("\n") || "No matching knowledge." };
+  }
+  return { ok: false, output: `Unknown or disallowed browser tool: ${call.tool}` };
 }
 
 function readProviderForm() {

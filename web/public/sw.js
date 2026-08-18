@@ -1,5 +1,5 @@
-const CACHE = "ntpx-truthcore-web-v0.5.3";
-const SHELL = ["/", "/app", "/styles.css", "/app.js", "/manifest.webmanifest", "/icon.svg"];
+const CACHE = "ntpx-truthcore-web-v1.0.0-rc1";
+const SHELL = ["/", "/app", "/styles.css", "/app.js", "/store.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));

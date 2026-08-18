@@ -2,6 +2,7 @@ package com.ntpx.truthcore.core.truth
 
 import com.ntpx.truthcore.core.evidence.Evidence
 import com.ntpx.truthcore.core.evidence.EvidenceSanitizer
+import com.ntpx.truthcore.core.semantic.DeepVerificationGate
 
 data class ClaimAssessment(
     val text: String,
@@ -26,7 +27,13 @@ object ClaimLock {
     private val negativeRegex = Regex("\\b(no|not|never|cannot|can't|won't|without|isn't|aren't|doesn't|don't)\\b", RegexOption.IGNORE_CASE)
     private val stop = setOf("the", "a", "an", "and", "or", "is", "are", "was", "were", "to", "of", "in", "on", "at", "for", "with", "from", "that", "this", "it", "be", "as", "by")
 
-    fun verify(draft: String, evidence: List<Evidence>, minSupport: Double = 0.72): ClaimLockResult {
+    fun verify(
+        draft: String,
+        evidence: List<Evidence>,
+        minSupport: Double = 0.72,
+        semanticGate: DeepVerificationGate? = null,
+        requireSemantic: Boolean = false,
+    ): ClaimLockResult {
         val indexed = evidence.mapIndexed { i, e -> i + 1 to e }.toMap()
         val assessments = mutableListOf<ClaimAssessment>()
         val released = mutableListOf<String>()
@@ -55,6 +62,7 @@ object ClaimLock {
             var contradicted = false
             var strongest = 0.0
             var reason = "Insufficient support"
+            var semanticPassed = false
 
             for (source in sources) {
                 val sanitized = EvidenceSanitizer.sanitize(source.content)
@@ -63,6 +71,7 @@ object ClaimLock {
                     reason = "Source expired, quarantined, or untrusted"
                     continue
                 }
+
                 val overlap = overlap(claim, sanitized.text)
                 val claimNums = numberRegex.findAll(claim).map { it.value }.toSet()
                 val sourceNums = numberRegex.findAll(sanitized.text).map { it.value }.toSet()
@@ -76,13 +85,34 @@ object ClaimLock {
                     reason = "Claim polarity conflicts with evidence"
                     continue
                 }
+
+                if (semanticGate != null) {
+                    val deep = semanticGate.assess(claim, source)
+                    if (deep.semanticAvailable) {
+                        if (!deep.releasable) {
+                            reason = deep.reason
+                            if (deep.reason.contains("contradiction", ignoreCase = true)) contradicted = true
+                            continue
+                        }
+                        semanticPassed = true
+                        strongest = maxOf(strongest, effective)
+                        reason = deep.reason
+                        continue
+                    }
+                    if (requireSemantic) {
+                        reason = deep.reason
+                        continue
+                    }
+                }
+
                 strongest = maxOf(strongest, overlap * effective)
             }
 
             when {
                 contradicted -> assessments += ClaimAssessment(statement, ClaimAssessment.Status.CONTRADICTED, refs.map { "S$it" }, reason)
                 strongest >= minSupport -> {
-                    assessments += ClaimAssessment(statement, ClaimAssessment.Status.SUPPORTED, refs.map { "S$it" }, "Bound evidence passed deterministic truth checks")
+                    val method = if (semanticPassed) "semantic + deterministic" else "deterministic"
+                    assessments += ClaimAssessment(statement, ClaimAssessment.Status.SUPPORTED, refs.map { "S$it" }, "Bound evidence passed $method truth checks")
                     released += statement
                 }
                 else -> assessments += ClaimAssessment(statement, ClaimAssessment.Status.UNSUPPORTED, refs.map { "S$it" }, reason)
