@@ -10,8 +10,10 @@
   - [x] deep semantic release gate
   - [x] source digest / HTTPS authentication primitive
   - [x] temporal knowledge graph + conflict surfacing
-  - [ ] Android-local embedding adapter
-  - [ ] Android-local NLI inference adapter
+  - [x] fail-closed embedding provider/index boundary
+  - [x] conservative contradiction resolver
+  - [ ] Android-local embedding model adapter
+  - [ ] Android-local NLI inference model adapter
   - [ ] integrate semantic gate into production ClaimLock policy
 - [ ] v0.7 Cognitive Executive
 - [ ] v0.8 Multi-Agent Cognitive Workforce
