@@ -5,6 +5,7 @@ import { readFile, stat } from "node:fs/promises";
 import { respond } from "./src/conversation.mjs";
 import { sanitizeEvidence } from "./src/evidence.mjs";
 import { createProvider, parseAllowedHosts } from "./src/provider.mjs";
+import { runWorkforce } from "./src/workforce.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, "public");
@@ -42,6 +43,15 @@ const server = http.createServer(async (req, res) => {
       const evidence = sanitizeClientEvidence(body?.clientEvidence);
       const reply = await respond(message, { provider, evidence });
       return json(res, 200, reply);
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/team") {
+      const body = await readJson(req);
+      const goal = String(body?.goal ?? "").slice(0, 8000).trim();
+      if (!goal) return json(res, 400, { ok: false, status: "ABSTAINED", error: "A team goal is required" });
+      const provider = createProvider(body?.provider ?? {}, { allowedHosts });
+      const result = await runWorkforce(goal, provider);
+      return json(res, result.ok ? 200 : 400, result);
     }
 
     if (req.method === "POST" && url.pathname === "/api/agent/plan") {
