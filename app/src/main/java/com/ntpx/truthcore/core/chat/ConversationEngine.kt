@@ -14,13 +14,13 @@ class ConversationEngine {
         Evidence(
             id = "local-architecture",
             title = "TruthCore architecture",
-            content = "TruthCore uses ClaimLock to withhold unsupported factual claims.",
+            content = "TruthCore uses ClaimLock to withhold unsupported factual claims. ClaimLock is active in TruthCore.",
             trust = 1.0,
         ),
         Evidence(
             id = "local-capabilities",
             title = "TruthCore Android capabilities",
-            content = "TruthCore v0.5.1 includes a native Android interface, microphone speech recognition, text to speech, local ClaimLock verification, evidence primitives, and memory primitives.",
+            content = "TruthCore Android is running locally. TruthCore v0.5.1 includes a native Android interface, microphone speech recognition, text to speech, local ClaimLock verification, evidence primitives, and memory primitives.",
             trust = 1.0,
         ),
         Evidence(
@@ -51,7 +51,7 @@ class ConversationEngine {
                 "TruthCore does not yet have a production model provider connected in v0.5.1 [S3]."
 
             request.contains("status", ignoreCase = true) ->
-                "TruthCore Android is running locally. ClaimLock is active, native voice is available, and no production model provider is connected yet [S1][S2][S3]."
+                "TruthCore Android is running locally [S2]. ClaimLock is active in TruthCore [S1]. TruthCore does not yet have a production model provider connected in v0.5.1 [S3]."
 
             else -> null
         }
@@ -65,10 +65,11 @@ class ConversationEngine {
         }
 
         val result = ClaimLock.verify(draft, localEvidence)
+        val released = result.released > 0 && result.withheld == 0
         return ConversationReply(
             text = result.answer,
-            verified = !result.answer.startsWith("Unknown", ignoreCase = true),
-            status = if (result.answer.startsWith("Unknown", ignoreCase = true)) "ABSTAINED" else "VERIFIED",
+            verified = released,
+            status = if (released) "VERIFIED" else "ABSTAINED",
         )
     }
 }
