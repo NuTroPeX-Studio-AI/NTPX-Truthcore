@@ -17,7 +17,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Runtime
@@ -42,5 +42,9 @@ jobs:
             sleep 0.25
           done
           grep -q '"ok":true' /tmp/health.json
+          grep -q '"version":"1.0.0-rc1"' /tmp/health.json
           curl -fsS http://127.0.0.1:8799/ | grep -q "NTPX TruthCore"
           curl -fsS http://127.0.0.1:8799/app | grep -q "Model settings"
+          curl -fsS http://127.0.0.1:8799/store.js | grep -q "indexedDB"
+      - name: Docker build
+        run: docker build -t ntpx-truthcore-web:ci ./web
