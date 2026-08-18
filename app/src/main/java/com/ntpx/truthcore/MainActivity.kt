@@ -1,6 +1,7 @@
 package com.ntpx.truthcore
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -22,8 +23,10 @@ import com.ntpx.truthcore.core.TruthCoreRuntime
 import com.ntpx.truthcore.core.model.ModelConfig
 import com.ntpx.truthcore.core.model.ModelProvider
 import com.ntpx.truthcore.core.model.ModelRequest
+import com.ntpx.truthcore.core.model.ModelSession
 import com.ntpx.truthcore.core.model.OpenAICompatibleProvider
 import com.ntpx.truthcore.voice.VoiceController
+import com.ntpx.truthcore.voice.VoiceForegroundService
 import java.util.concurrent.Executors
 
 data class ChatMessage(val speaker: Speaker, val text: String, val status: String? = null)
@@ -33,11 +36,16 @@ class MainActivity : ComponentActivity() {
     private lateinit var voice: VoiceController
     private lateinit var runtime: TruthCoreRuntime
     private var startVoiceAfterPermission = false
+    private var startHandsFreeAfterPermission = false
     private val modelExecutor = Executors.newSingleThreadExecutor()
 
     private val requestMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted && startVoiceAfterPermission && ::voice.isInitialized) voice.start()
+        if (granted) {
+            if (startVoiceAfterPermission && ::voice.isInitialized) voice.start()
+            if (startHandsFreeAfterPermission) startHandsFreeSession()
+        }
         startVoiceAfterPermission = false
+        startHandsFreeAfterPermission = false
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,7 +56,7 @@ class MainActivity : ComponentActivity() {
                 mutableStateListOf(
                     ChatMessage(
                         Speaker.TRUTHCORE,
-                        "TruthCore v1 runtime is ready. ClaimLock, persistent memory, evidence retrieval, permissioned agent tools, and the audit chain are active. Connect a model for open-ended reasoning.",
+                        "TruthCore v1 runtime is ready. ClaimLock, persistent memory, evidence retrieval, permissioned agent tools, audit chaining, and user-started hands-free mode are active. Connect a model for open-ended reasoning.",
                         "LOCAL",
                     )
                 )
@@ -56,8 +64,10 @@ class MainActivity : ComponentActivity() {
             var input by remember { mutableStateOf("") }
             var voiceState by remember { mutableStateOf("Idle") }
             var speakReplies by remember { mutableStateOf(true) }
-            var modelProvider by remember { mutableStateOf<ModelProvider?>(null) }
-            var providerStatus by remember { mutableStateOf("Disconnected") }
+            var modelProvider by remember { mutableStateOf<ModelProvider?>(ModelSession.provider) }
+            var providerStatus by remember {
+                mutableStateOf(ModelSession.provider?.let { "Connected: ${it.displayName}" } ?: "Disconnected")
+            }
             var modelBusy by remember { mutableStateOf(false) }
             var settingsOpen by remember { mutableStateOf(false) }
             var helpOpen by remember { mutableStateOf(false) }
@@ -99,9 +109,11 @@ class MainActivity : ComponentActivity() {
                             modelBusy = false
                             if (test.success) {
                                 modelProvider = candidate
+                                ModelSession.provider = candidate
                                 providerStatus = "Connected: ${modelName.trim()}"
                             } else {
                                 modelProvider = null
+                                ModelSession.provider = null
                                 providerStatus = test.error ?: "Connection test failed"
                             }
                         }
@@ -156,6 +168,7 @@ class MainActivity : ComponentActivity() {
                                 onConnect = connectProvider,
                                 onDisconnect = {
                                     modelProvider = null
+                                    ModelSession.provider = null
                                     apiKey = ""
                                     providerStatus = "Disconnected"
                                 },
@@ -203,6 +216,18 @@ class MainActivity : ComponentActivity() {
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(onClick = { ensureMicThenStartHandsFree() }, modifier = Modifier.weight(1f)) {
+                                Text("Start hands-free")
+                            }
+                            OutlinedButton(onClick = { stopHandsFreeSession() }, modifier = Modifier.weight(1f)) {
+                                Text("End hands-free")
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
@@ -214,7 +239,7 @@ class MainActivity : ComponentActivity() {
                         }
 
                         Text(
-                            "Remote models are untrusted drafts. Factual answers pass through evidence + ClaimLock. Writes require single-use approval and actions are audit chained.",
+                            "Remote models are untrusted drafts. Factual answers pass through evidence + ClaimLock. Writes require single-use approval and actions are audit chained. Hands-free mode listens only after you start it and uses the wake phrase ‘Hey TruthCore’.",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -238,13 +263,30 @@ class MainActivity : ComponentActivity() {
             requestMic.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
+
+    private fun ensureMicThenStartHandsFree() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            startHandsFreeSession()
+        } else {
+            startHandsFreeAfterPermission = true
+            requestMic.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    private fun startHandsFreeSession() {
+        startForegroundService(Intent(this, VoiceForegroundService::class.java))
+    }
+
+    private fun stopHandsFreeSession() {
+        stopService(Intent(this, VoiceForegroundService::class.java))
+    }
 }
 
 @Composable
 private fun Header(voiceState: String, modelConnected: Boolean, modelBusy: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("NTPX TruthCore", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("Cognitive Agent OS · v1.0 source-completion build", style = MaterialTheme.typography.labelLarge)
+        Text("Cognitive Agent OS · v1.0.0-rc1", style = MaterialTheme.typography.labelLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusPill("Truth gate ON")
             StatusPill("Voice: $voiceState")
@@ -265,6 +307,7 @@ private fun RuntimeCommandsCard() {
             Text("add knowledge: <label> | <content>  → approval gated", style = MaterialTheme.typography.bodySmall)
             Text("agent: <goal>  → bounded model-planned tool run", style = MaterialTheme.typography.bodySmall)
             Text("list tools · audit status", style = MaterialTheme.typography.bodySmall)
+            Text("Hands-free wake phrase: Hey TruthCore", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -293,7 +336,7 @@ private fun ModelSettingsPanel(
                 Button(onClick = onConnect, enabled = !busy && baseUrl.isNotBlank() && modelName.isNotBlank()) { Text(if (connected) "Reconnect & test" else "Connect & test") }
                 if (connected) OutlinedButton(onClick = onDisconnect, enabled = !busy) { Text("Disconnect") }
             }
-            Text("The API key is not written to preferences, files, logs, GitHub, or saved instance state.", style = MaterialTheme.typography.bodySmall)
+            Text("The API key is not written to preferences, files, logs, GitHub, or saved instance state. A running hands-free service can reuse it only while this app process remains alive.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
