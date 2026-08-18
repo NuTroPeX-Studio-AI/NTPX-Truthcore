@@ -7,33 +7,53 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.ntpx.truthcore.core.evidence.Evidence
-import com.ntpx.truthcore.core.truth.ClaimLock
+import com.ntpx.truthcore.core.chat.ConversationEngine
 import com.ntpx.truthcore.voice.VoiceController
+
+data class ChatMessage(
+    val speaker: Speaker,
+    val text: String,
+    val status: String? = null,
+)
+
+enum class Speaker { USER, TRUTHCORE }
 
 class MainActivity : ComponentActivity() {
     private lateinit var voice: VoiceController
     private var startVoiceAfterPermission = false
 
     private val requestMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted && startVoiceAfterPermission) voice.start()
+        if (granted && startVoiceAfterPermission && ::voice.isInitialized) voice.start()
         startVoiceAfterPermission = false
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
+            val engine = remember { ConversationEngine() }
+            val messages = remember {
+                mutableStateListOf(
+                    ChatMessage(
+                        speaker = Speaker.TRUTHCORE,
+                        text = "TruthCore is ready. Ask “status” or “help”, or use the microphone. I will abstain instead of inventing unsupported answers.",
+                        status = "LOCAL",
+                    )
+                )
+            }
             var input by remember { mutableStateOf("") }
-            var output by remember { mutableStateOf("TruthCore ready. Verified-only mode is active.") }
             var voiceState by remember { mutableStateOf("Idle") }
-            var verifiedOnly by remember { mutableStateOf(true) }
+            var speakReplies by remember { mutableStateOf(true) }
+            val listState = rememberLazyListState()
 
             DisposableEffect(Unit) {
                 voice = VoiceController(
@@ -44,46 +64,99 @@ class MainActivity : ComponentActivity() {
                 onDispose { voice.destroy() }
             }
 
+            LaunchedEffect(messages.size) {
+                if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+            }
+
+            val submit = {
+                val request = input.trim()
+                if (request.isNotBlank()) {
+                    messages += ChatMessage(Speaker.USER, request)
+                    input = ""
+                    val reply = engine.respond(request)
+                    messages += ChatMessage(Speaker.TRUTHCORE, reply.text, reply.status)
+                    if (speakReplies && ::voice.isInitialized) voice.speak(reply.text)
+                }
+            }
+
             MaterialTheme {
                 Surface(Modifier.fillMaxSize()) {
                     Column(
-                        modifier = Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Text("NTPX TruthCore", style = MaterialTheme.typography.headlineMedium)
-                        Text("Android Cognitive Agent OS · v0.5 alpha", style = MaterialTheme.typography.labelLarge)
+                        Header(voiceState = voiceState)
 
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Switch(checked = verifiedOnly, onCheckedChange = { verifiedOnly = it })
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (verifiedOnly) "VERIFIED_ONLY" else "Exploratory mode")
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            contentPadding = PaddingValues(vertical = 4.dp),
+                        ) {
+                            items(messages) { message ->
+                                MessageBubble(message)
+                            }
                         }
+
+                        HorizontalDivider()
 
                         OutlinedTextField(
                             value = input,
                             onValueChange = { input = it },
-                            label = { Text("Ask TruthCore") },
+                            label = { Text("Message TruthCore") },
+                            placeholder = { Text("Type a message or tap Mic") },
                             modifier = Modifier.fillMaxWidth(),
-                            minLines = 3,
+                            minLines = 1,
+                            maxLines = 4,
                         )
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(onClick = {
-                                output = demoVerifiedResponse(input, verifiedOnly)
-                                voice.speak(output)
-                            }) { Text("Send") }
-                            OutlinedButton(onClick = { ensureMicThenStart() }) { Text("Mic") }
-                            OutlinedButton(onClick = { voice.stop() }) { Text("Stop") }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Button(
+                                onClick = submit,
+                                enabled = input.isNotBlank(),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Send")
+                            }
+                            OutlinedButton(onClick = { ensureMicThenStart() }) {
+                                Text("Mic")
+                            }
+                            OutlinedButton(onClick = {
+                                if (::voice.isInitialized) {
+                                    voice.cancel()
+                                    voice.stopSpeaking()
+                                }
+                            }) {
+                                Text("Stop")
+                            }
                         }
 
-                        Text("Voice: $voiceState", style = MaterialTheme.typography.labelMedium)
-                        HorizontalDivider()
-                        Text("Response", style = MaterialTheme.typography.titleMedium)
-                        Text(output)
-                        HorizontalDivider()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column {
+                                Text("Speak replies", style = MaterialTheme.typography.labelLarge)
+                                Text(
+                                    "Uses Android text to speech",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            Switch(checked = speakReplies, onCheckedChange = { speakReplies = it })
+                        }
+
                         Text(
-                            "This Android foundation runs ClaimLock locally. Model/tool adapters are intentionally not granted authority over factual release.",
-                            style = MaterialTheme.typography.bodySmall
+                            "Model provider: not connected yet · Truth gate remains active",
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
                 }
@@ -92,6 +165,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun ensureMicThenStart() {
+        if (!::voice.isInitialized) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             voice.start()
         } else {
@@ -99,17 +173,72 @@ class MainActivity : ComponentActivity() {
             requestMic.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
+}
 
-    private fun demoVerifiedResponse(input: String, strict: Boolean): String {
-        if (input.isBlank()) return "Unknown: No request was provided."
-        val evidence = listOf(
-            Evidence("local-architecture", "TruthCore architecture", "TruthCore uses ClaimLock to withhold unsupported factual claims.", trust = 1.0)
+@Composable
+private fun Header(voiceState: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "NTPX TruthCore",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
         )
-        val draft = if (input.contains("claimlock", ignoreCase = true)) {
-            "TruthCore uses ClaimLock to withhold unsupported factual claims [S1]."
-        } else {
-            "Unknown: I do not yet have a connected evidence source for that request."
+        Text(
+            "Android Cognitive Agent OS · v0.5.1 alpha",
+            style = MaterialTheme.typography.labelLarge,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatusPill("Truth gate ON")
+            StatusPill("Voice: $voiceState")
         }
-        return if (strict) ClaimLock.verify(draft, evidence).answer else draft
+    }
+}
+
+@Composable
+private fun StatusPill(text: String) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        tonalElevation = 2.dp,
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelMedium,
+        )
+    }
+}
+
+@Composable
+private fun MessageBubble(message: ChatMessage) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (message.speaker == Speaker.USER) Arrangement.End else Arrangement.Start,
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(0.9f),
+            shape = RoundedCornerShape(18.dp),
+            tonalElevation = if (message.speaker == Speaker.USER) 4.dp else 1.dp,
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        if (message.speaker == Speaker.USER) "You" else "TruthCore",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    message.status?.let {
+                        Text(it, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                Text(message.text, style = MaterialTheme.typography.bodyLarge)
+            }
+        }
     }
 }
