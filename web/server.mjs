@@ -16,7 +16,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
     if (req.method === "GET" && url.pathname === "/api/health") {
-      return json(res, 200, { ok: true, service: "ntpx-truthcore-web", version: "0.5.3-alpha01" });
+      return json(res, 200, { ok: true, service: "ntpx-truthcore-web", version: "1.0.0-rc1" });
     }
 
     if (req.method === "POST" && url.pathname === "/api/provider/test") {
@@ -35,7 +35,8 @@ const server = http.createServer(async (req, res) => {
       const message = String(body?.message ?? "").slice(0, 12000);
       const config = body?.provider ?? null;
       const provider = config?.baseUrl && config?.model ? createProvider(config, { allowedHosts }) : null;
-      const reply = await respond(message, { provider });
+      const evidence = sanitizeClientEvidence(body?.clientEvidence);
+      const reply = await respond(message, { provider, evidence });
       return json(res, 200, reply);
     }
 
@@ -55,6 +56,20 @@ server.listen(port, () => {
   console.log(`NTPX TruthCore Web listening on http://127.0.0.1:${port}`);
   if (!allowedHosts.size) console.log("Model proxy disabled until TRUTHCORE_ALLOWED_PROVIDER_HOSTS is configured.");
 });
+
+function sanitizeClientEvidence(input) {
+  if (!Array.isArray(input)) return [];
+  return input.slice(0, 16).map((item, index) => {
+    const id = String(item?.id || `client-${index}`).slice(0, 160);
+    const label = String(item?.label || "Client evidence").slice(0, 180);
+    const content = String(item?.content || "").slice(0, 8000);
+    const trust = Math.max(0, Math.min(0.9, Number(item?.trust ?? 0.75)));
+    const source = String(item?.sourceUri || "").slice(0, 1000);
+    const sourceUri = /^(https|memory):\/\//i.test(source) ? source : undefined;
+    const independentKey = String(item?.independentKey || id).slice(0, 256);
+    return { id, label, content, trust, sourceUri, independentKey };
+  }).filter((item) => item.content.trim());
+}
 
 async function readJson(req) {
   const chunks = [];
