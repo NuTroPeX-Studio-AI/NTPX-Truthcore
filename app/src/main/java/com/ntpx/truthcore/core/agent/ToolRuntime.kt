@@ -2,6 +2,8 @@ package com.ntpx.truthcore.core.agent
 
 import com.ntpx.truthcore.core.data.TruthCoreStore
 import com.ntpx.truthcore.core.evidence.Evidence
+import com.ntpx.truthcore.core.mcp.McpSession
+import org.json.JSONObject
 import java.time.Instant
 import java.util.UUID
 
@@ -50,6 +52,17 @@ class ToolRuntime(private val store: TruthCoreStore) {
             )
             store.upsertKnowledge(evidence)
             "Saved knowledge ${evidence.id}."
+        })
+        register(RegisteredTool("mcp.call", "Call a configured MCP tool. args: tool, arguments_json", ToolRisk.EXTERNAL) { args ->
+            val client = McpSession.client ?: error("No MCP server is connected")
+            val tool = args["tool"].orEmpty().trim()
+            require(tool.matches(Regex("[A-Za-z0-9_.:/-]{1,200}"))) { "tool is required or invalid" }
+            val jsonText = args["arguments_json"].orEmpty().ifBlank { "{}" }
+            val arguments = runCatching { JSONObject(jsonText) }
+                .getOrElse { error("arguments_json must be a JSON object") }
+            val result = client.callTool(tool, arguments)
+            if (!result.success) error(result.error ?: "MCP tool call failed")
+            result.text
         })
     }
 
