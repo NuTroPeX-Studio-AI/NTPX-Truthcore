@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="description" content="NTPX TruthCore is a verified-first cognitive agent platform for Android and the web.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <title>NTPX TruthCore</title>
+</head>
+<body class="site-page">
+  <header class="site-nav shell">
+    <a class="brand" href="/" aria-label="NTPX TruthCore home">
+      <span class="brand-mark">TC</span>
+      <span>NTPX TruthCore</span>
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#architecture">Architecture</a>
+      <a href="#platforms">Platforms</a>
+      <a href="#roadmap">Roadmap</a>
+      <a class="button small" href="/app">Launch Web App</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero shell">
+      <div class="hero-copy">
+        <p class="eyebrow">Verified-first cognitive agent platform</p>
+        <h1>Think freely. Verify aggressively. Release only what the evidence can support.</h1>
+        <p class="lede">TruthCore is being built as one cognitive system across Android and the web: voice conversation, model routing, ClaimLock verification, evidence handling, memory, and permissioned agent workflows.</p>
+        <div class="hero-actions">
+          <a class="button" href="/app">Open TruthCore Web</a>
+          <a class="button ghost" href="#architecture">See the trust pipeline</a>
+        </div>
+        <div class="status-row" aria-label="Current platform status">
+          <span class="status-pill good">Android app</span>
+          <span class="status-pill good">Web foundation</span>
+          <span class="status-pill">ClaimLock active</span>
+        </div>
+      </div>
+      <aside class="hero-panel" aria-label="TruthCore release pipeline">
+        <div class="pipeline-node">User request</div>
+        <div class="pipeline-arrow">↓</div>
+        <div class="pipeline-node">Model draft</div>
+        <div class="pipeline-arrow">↓</div>
+        <div class="pipeline-node accent">Evidence + ClaimLock</div>
+        <div class="pipeline-arrow">↓</div>
+        <div class="pipeline-split">
+          <span>VERIFIED</span>
+          <span>ABSTAINED</span>
+        </div>
+      </aside>
+    </section>
+
+    <section class="section shell" id="architecture">
+      <p class="eyebrow">Architecture</p>
+      <h2>A model is a proposer, not the authority.</h2>
+      <div class="card-grid three">
+        <article class="feature-card">
+          <h3>Reason</h3>
+          <p>Connected models can draft, transform, summarize, plan, and generate candidate responses.</p>
+        </article>
+        <article class="feature-card">
+          <h3>Verify</h3>
+          <p>ClaimLock binds factual statements to evidence and withholds unsupported or contradictory claims.</p>
+        </article>
+        <article class="feature-card">
+          <h3>Act with authority</h3>
+          <p>Future agent actions stay behind permissions, approvals, tool policy, and an audit trail.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section shell" id="platforms">
+      <p class="eyebrow">Platforms</p>
+      <h2>One TruthCore. Multiple front ends.</h2>
+      <div class="platform-grid">
+        <article class="platform-card">
+          <div class="platform-label">ANDROID</div>
+          <h3>Native Kotlin + Compose</h3>
+          <p>Microphone input, Android speech recognition, text-to-speech, model settings, ClaimLock, and GitHub-built APKs.</p>
+        </article>
+        <article class="platform-card">
+          <div class="platform-label">WEB</div>
+          <h3>Website + installable web app</h3>
+          <p>Responsive public site, browser chat, optional voice controls, server-side provider proxy, and a port of TruthCore's deterministic truth gate.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section shell" id="roadmap">
+      <p class="eyebrow">Next systems</p>
+      <h2>The web app is a platform layer, not a separate product fork.</h2>
+      <div class="roadmap-list">
+        <div><strong>01</strong><span>Persistent memory + account-safe storage</span></div>
+        <div><strong>02</strong><span>RAG and real evidence acquisition</span></div>
+        <div><strong>03</strong><span>Deep semantic verification</span></div>
+        <div><strong>04</strong><span>Agent planner, tools, MCP, approvals, and audit</span></div>
+        <div><strong>05</strong><span>Shared identity and synchronized Android/Web sessions</span></div>
+      </div>
+      <a class="button" href="/app">Launch the web alpha</a>
+    </section>
+  </main>
+
+  <footer class="site-footer shell">
+    <span>NTPX TruthCore</span>
+    <span>Models may propose. Evidence must authorize factual release.</span>
+  </footer>
+</body>
+</html>
