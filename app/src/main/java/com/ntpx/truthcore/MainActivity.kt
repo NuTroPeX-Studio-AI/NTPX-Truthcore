@@ -16,9 +16,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.ntpx.truthcore.core.chat.ConversationEngine
+import com.ntpx.truthcore.core.model.ModelConfig
+import com.ntpx.truthcore.core.model.ModelProvider
+import com.ntpx.truthcore.core.model.ModelRequest
+import com.ntpx.truthcore.core.model.OpenAICompatibleProvider
 import com.ntpx.truthcore.voice.VoiceController
+import java.util.concurrent.Executors
 
 data class ChatMessage(
     val speaker: Speaker,
@@ -31,6 +37,7 @@ enum class Speaker { USER, TRUTHCORE }
 class MainActivity : ComponentActivity() {
     private lateinit var voice: VoiceController
     private var startVoiceAfterPermission = false
+    private val modelExecutor = Executors.newSingleThreadExecutor()
 
     private val requestMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted && startVoiceAfterPermission && ::voice.isInitialized) voice.start()
@@ -45,7 +52,7 @@ class MainActivity : ComponentActivity() {
                 mutableStateListOf(
                     ChatMessage(
                         speaker = Speaker.TRUTHCORE,
-                        text = "TruthCore is ready. Ask “status” or “help”, or use the microphone. I will abstain instead of inventing unsupported answers.",
+                        text = "TruthCore is ready. The truth gate stays between the model and factual release. Open Model settings to connect an HTTPS provider.",
                         status = "LOCAL",
                     )
                 )
@@ -53,6 +60,13 @@ class MainActivity : ComponentActivity() {
             var input by remember { mutableStateOf("") }
             var voiceState by remember { mutableStateOf("Idle") }
             var speakReplies by remember { mutableStateOf(true) }
+            var modelProvider by remember { mutableStateOf<ModelProvider?>(null) }
+            var providerStatus by remember { mutableStateOf("Disconnected") }
+            var modelBusy by remember { mutableStateOf(false) }
+            var settingsOpen by remember { mutableStateOf(false) }
+            var baseUrl by remember { mutableStateOf("") }
+            var modelName by remember { mutableStateOf("") }
+            var apiKey by remember { mutableStateOf("") }
             val listState = rememberLazyListState()
 
             DisposableEffect(Unit) {
@@ -68,14 +82,57 @@ class MainActivity : ComponentActivity() {
                 if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
             }
 
+            val connectProvider = {
+                val candidate = OpenAICompatibleProvider(
+                    ModelConfig(
+                        baseUrl = baseUrl,
+                        model = modelName,
+                        apiKey = apiKey,
+                    )
+                )
+                val validation = candidate.validate()
+                if (validation != null) {
+                    providerStatus = validation
+                } else if (!modelBusy) {
+                    modelBusy = true
+                    providerStatus = "Testing connection…"
+                    modelExecutor.execute {
+                        val test = candidate.generate(
+                            ModelRequest(
+                                systemPrompt = "This is a connectivity test. Reply with the single word READY.",
+                                userPrompt = "Connectivity test",
+                                temperature = 0.0,
+                            )
+                        )
+                        runOnUiThread {
+                            modelBusy = false
+                            if (test.success) {
+                                modelProvider = candidate
+                                providerStatus = "Connected: ${modelName.trim()}"
+                            } else {
+                                modelProvider = null
+                                providerStatus = test.error ?: "Connection test failed"
+                            }
+                        }
+                    }
+                }
+            }
+
             val submit = {
                 val request = input.trim()
-                if (request.isNotBlank()) {
+                if (request.isNotBlank() && !modelBusy) {
                     messages += ChatMessage(Speaker.USER, request)
                     input = ""
-                    val reply = engine.respond(request)
-                    messages += ChatMessage(Speaker.TRUTHCORE, reply.text, reply.status)
-                    if (speakReplies && ::voice.isInitialized) voice.speak(reply.text)
+                    modelBusy = true
+                    val providerSnapshot = modelProvider
+                    modelExecutor.execute {
+                        val reply = engine.respond(request, providerSnapshot)
+                        runOnUiThread {
+                            modelBusy = false
+                            messages += ChatMessage(Speaker.TRUTHCORE, reply.text, reply.status)
+                            if (speakReplies && ::voice.isInitialized) voice.speak(reply.text)
+                        }
+                    }
                 }
             }
 
@@ -85,9 +142,47 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Header(voiceState = voiceState)
+                        Header(
+                            voiceState = voiceState,
+                            modelConnected = modelProvider != null,
+                            modelBusy = modelBusy,
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                providerStatus,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = { settingsOpen = !settingsOpen }) {
+                                Text(if (settingsOpen) "Hide settings" else "Model settings")
+                            }
+                        }
+
+                        if (settingsOpen) {
+                            ModelSettingsPanel(
+                                baseUrl = baseUrl,
+                                modelName = modelName,
+                                apiKey = apiKey,
+                                busy = modelBusy,
+                                connected = modelProvider != null,
+                                onBaseUrlChange = { baseUrl = it },
+                                onModelNameChange = { modelName = it },
+                                onApiKeyChange = { apiKey = it },
+                                onConnect = connectProvider,
+                                onDisconnect = {
+                                    modelProvider = null
+                                    apiKey = ""
+                                    providerStatus = "Disconnected"
+                                },
+                            )
+                        }
 
                         LazyColumn(
                             state = listState,
@@ -112,6 +207,7 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.fillMaxWidth(),
                             minLines = 1,
                             maxLines = 4,
+                            enabled = !modelBusy,
                         )
 
                         Row(
@@ -121,12 +217,15 @@ class MainActivity : ComponentActivity() {
                         ) {
                             Button(
                                 onClick = submit,
-                                enabled = input.isNotBlank(),
+                                enabled = input.isNotBlank() && !modelBusy,
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Text("Send")
+                                Text(if (modelBusy) "Working…" else "Send")
                             }
-                            OutlinedButton(onClick = { ensureMicThenStart() }) {
+                            OutlinedButton(
+                                onClick = { ensureMicThenStart() },
+                                enabled = !modelBusy,
+                            ) {
                                 Text("Mic")
                             }
                             OutlinedButton(onClick = {
@@ -146,22 +245,24 @@ class MainActivity : ComponentActivity() {
                         ) {
                             Column {
                                 Text("Speak replies", style = MaterialTheme.typography.labelLarge)
-                                Text(
-                                    "Uses Android text to speech",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
+                                Text("Uses Android text to speech", style = MaterialTheme.typography.bodySmall)
                             }
                             Switch(checked = speakReplies, onCheckedChange = { speakReplies = it })
                         }
 
                         Text(
-                            "Model provider: not connected yet · Truth gate remains active",
+                            "Remote models are untrusted drafts. Factual answers still pass through ClaimLock. API keys remain in volatile app memory only.",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        modelExecutor.shutdownNow()
+        super.onDestroy()
     }
 
     private fun ensureMicThenStart() {
@@ -176,7 +277,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun Header(voiceState: String) {
+private fun Header(voiceState: String, modelConnected: Boolean, modelBusy: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             "NTPX TruthCore",
@@ -184,12 +285,89 @@ private fun Header(voiceState: String) {
             fontWeight = FontWeight.Bold,
         )
         Text(
-            "Android Cognitive Agent OS · v0.5.1 alpha",
+            "Android Cognitive Agent OS · v0.5.2 alpha",
             style = MaterialTheme.typography.labelLarge,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusPill("Truth gate ON")
             StatusPill("Voice: $voiceState")
+            StatusPill(
+                when {
+                    modelBusy -> "Model: BUSY"
+                    modelConnected -> "Model: ON"
+                    else -> "Model: OFF"
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ModelSettingsPanel(
+    baseUrl: String,
+    modelName: String,
+    apiKey: String,
+    busy: Boolean,
+    connected: Boolean,
+    onBaseUrlChange: (String) -> Unit,
+    onModelNameChange: (String) -> Unit,
+    onApiKeyChange: (String) -> Unit,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("HTTPS chat provider", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Enter the base URL for an OpenAI-compatible HTTPS chat endpoint. TruthCore appends /chat/completions when needed.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            OutlinedTextField(
+                value = baseUrl,
+                onValueChange = onBaseUrlChange,
+                label = { Text("Base URL") },
+                placeholder = { Text("https://provider.example/v1") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !busy,
+            )
+            OutlinedTextField(
+                value = modelName,
+                onValueChange = onModelNameChange,
+                label = { Text("Model") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !busy,
+            )
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = onApiKeyChange,
+                label = { Text("API key (optional for self-hosted endpoints)") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !busy,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onConnect,
+                    enabled = !busy && baseUrl.isNotBlank() && modelName.isNotBlank(),
+                ) {
+                    Text(if (connected) "Reconnect & test" else "Connect & test")
+                }
+                if (connected) {
+                    OutlinedButton(onClick = onDisconnect, enabled = !busy) {
+                        Text("Disconnect")
+                    }
+                }
+            }
+            Text(
+                "The API key is not written to preferences, files, logs, GitHub, or saved instance state.",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }
