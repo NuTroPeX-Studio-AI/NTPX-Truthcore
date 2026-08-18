@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -16,8 +16,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: true
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -27,16 +25,6 @@ jobs:
           gradle-version: '9.5.0'
       - name: Generate official Gradle wrapper
         run: gradle wrapper --gradle-version 9.5.0
-      - name: Persist official Gradle wrapper on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add gradlew gradlew.bat gradle/wrapper/gradle-wrapper.jar gradle/wrapper/gradle-wrapper.properties
-          if ! git diff --cached --quiet; then
-            git commit -m "build: add official Gradle wrapper [skip ci]"
-            git push
-          fi
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
       - name: Build debug APK
@@ -56,3 +44,32 @@ jobs:
             gradlew.bat
             gradle/wrapper/gradle-wrapper.jar
             gradle/wrapper/gradle-wrapper.properties
+
+  persist-wrapper:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - name: Generate official Gradle wrapper
+        run: gradle wrapper --gradle-version 9.5.0
+      - name: Commit wrapper if missing or changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add gradlew gradlew.bat gradle/wrapper/gradle-wrapper.jar gradle/wrapper/gradle-wrapper.properties
+          if ! git diff --cached --quiet; then
+            git commit -m "build: add official Gradle wrapper [skip ci]"
+            git push
+          fi
