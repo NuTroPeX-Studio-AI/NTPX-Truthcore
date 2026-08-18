@@ -1,0 +1,46 @@
+name: Web CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/web-ci.yml"
+  pull_request:
+    paths:
+      - "web/**"
+      - ".github/workflows/web-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Runtime
+        run: node --version
+      - name: Web unit tests
+        working-directory: web
+        run: npm test
+      - name: Syntax checks
+        working-directory: web
+        run: npm run check
+      - name: HTTP smoke test
+        working-directory: web
+        shell: bash
+        run: |
+          PORT=8799 node server.mjs >/tmp/truthcore-web.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8799/api/health >/tmp/health.json; then
+              break
+            fi
+            sleep 0.25
+          done
+          grep -q '"ok":true' /tmp/health.json
+          curl -fsS http://127.0.0.1:8799/ | grep -q "NTPX TruthCore"
+          curl -fsS http://127.0.0.1:8799/app | grep -q "Model settings"

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="description" content="NTPX TruthCore Web cognitive agent interface">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <title>TruthCore Web</title>
+</head>
+<body class="app-page">
+  <div class="app-shell">
+    <header class="app-header">
+      <a class="brand" href="/">
+        <span class="brand-mark">TC</span>
+        <span>NTPX TruthCore</span>
+      </a>
+      <div class="app-header-actions">
+        <button id="installButton" class="button ghost small hidden" type="button">Install</button>
+        <button id="settingsButton" class="button small" type="button">Model settings</button>
+      </div>
+    </header>
+
+    <section class="runtime-bar" aria-label="Runtime state">
+      <span class="status-pill good">Truth gate ON</span>
+      <span id="providerPill" class="status-pill">Provider: local only</span>
+      <span id="voicePill" class="status-pill">Voice: idle</span>
+    </section>
+
+    <main id="messages" class="messages" aria-live="polite" aria-label="Conversation"></main>
+
+    <section class="composer" aria-label="Message composer">
+      <textarea id="messageInput" rows="2" maxlength="12000" placeholder="Message TruthCore"></textarea>
+      <div class="composer-actions">
+        <button id="sendButton" class="button" type="button">Send</button>
+        <button id="micButton" class="button ghost" type="button">Mic</button>
+        <button id="stopButton" class="button ghost" type="button">Stop</button>
+        <label class="switch-label"><input id="speakToggle" type="checkbox" checked> Speak replies</label>
+      </div>
+      <p class="composer-note">Factual model output remains untrusted until ClaimLock can bind it to evidence.</p>
+    </section>
+  </div>
+
+  <dialog id="settingsDialog" class="settings-dialog">
+    <form method="dialog" class="settings-card">
+      <div class="settings-heading">
+        <div>
+          <p class="eyebrow">Provider connection</p>
+          <h2>Model settings</h2>
+        </div>
+        <button class="icon-button" value="cancel" aria-label="Close settings">×</button>
+      </div>
+      <label>HTTPS base URL
+        <input id="baseUrlInput" type="url" inputmode="url" autocomplete="off" placeholder="https://provider.example/v1">
+      </label>
+      <label>Model name
+        <input id="modelInput" type="text" autocomplete="off" placeholder="model-name">
+      </label>
+      <label>API key
+        <input id="apiKeyInput" type="password" autocomplete="off" placeholder="Held in this tab only">
+      </label>
+      <p class="settings-note">The browser does not write the API key to localStorage, cookies, or the service-worker cache. The server only proxies hosts explicitly allowed by the deployment operator.</p>
+      <div id="settingsStatus" class="settings-status">Not connected.</div>
+      <div class="settings-actions">
+        <button id="disconnectButton" class="button ghost" type="button">Disconnect</button>
+        <button id="testButton" class="button" type="button">Connect &amp; test</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
