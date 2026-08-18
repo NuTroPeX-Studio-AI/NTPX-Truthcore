@@ -15,7 +15,19 @@
   - [x] factual model drafts routed through ClaimLock
   - [x] unsupported factual model output withheld
   - [x] creative/transformation output visibly labeled GENERATED
-  - [ ] live-provider device validation with user-supplied credentials
+  - [ ] live-provider Android device validation with user-supplied credentials
+- [x] v0.5.3 Web platform foundation
+  - [x] responsive public website
+  - [x] installable PWA-style web application
+  - [x] browser text and optional voice interface
+  - [x] JavaScript ClaimLock/evidence port
+  - [x] server-side HTTPS model proxy
+  - [x] provider-host allowlist and private-network blocking
+  - [x] BYOK credentials excluded from persistent browser storage
+  - [x] Web CI + HTTP smoke tests
+  - [x] Docker deployment package
+  - [ ] production domain + hosting deployment
+  - [ ] live-provider web validation on production HTTPS origin
 - [ ] v0.6 Deep Semantic Verification
 - [ ] v0.7 Cognitive Executive
 - [ ] v0.8 Multi-Agent Cognitive Workforce
