@@ -26,7 +26,7 @@ class ConversationEngineTest {
         assertTrue(reply.verified)
         assertEquals("VERIFIED", reply.status)
         assertTrue(reply.text.contains("ClaimLock"))
-        assertTrue(reply.text.contains("model provider untrusted"))
+        assertTrue(reply.text.contains("model provider as untrusted"))
     }
 
     @Test
