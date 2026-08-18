@@ -29,7 +29,7 @@ class ConversationEngine {
         Evidence(
             id = "local-provider-security",
             label = "TruthCore provider security",
-            content = "TruthCore v0.5.2 keeps the model provider untrusted, requires HTTPS for remote model endpoints, does not persist the API key to disk, and routes factual model drafts through ClaimLock before release.",
+            content = "TruthCore v0.5.2 treats the model provider as untrusted, requires HTTPS for remote model endpoints, keeps API keys only in volatile app memory, and routes factual model drafts through ClaimLock before release.",
             trust = 1.0,
         ),
     )
@@ -76,10 +76,10 @@ class ConversationEngine {
                 "TruthCore v0.5.2 includes a native Android interface, microphone speech recognition, text to speech, local ClaimLock verification, evidence primitives, memory primitives, and a configurable HTTPS model provider runtime [S2]."
 
             lower.contains("model") || lower.contains("provider") || lower.contains("online") ->
-                "TruthCore v0.5.2 keeps the model provider untrusted, requires HTTPS for remote model endpoints, does not persist the API key to disk, and routes factual model drafts through ClaimLock before release [S3]."
+                "TruthCore v0.5.2 treats the model provider as untrusted, requires HTTPS for remote model endpoints, keeps API keys only in volatile app memory, and routes factual model drafts through ClaimLock before release [S3]."
 
             lower.contains("status") ->
-                "TruthCore Android is running locally [S2]. ClaimLock is active in TruthCore [S1]. TruthCore v0.5.2 keeps the model provider untrusted and routes factual model drafts through ClaimLock before release [S3]."
+                "TruthCore Android is running locally [S2]. ClaimLock is active in TruthCore [S1]. TruthCore v0.5.2 treats the model provider as untrusted and routes factual model drafts through ClaimLock before release [S3]."
 
             else -> null
         } ?: return null
