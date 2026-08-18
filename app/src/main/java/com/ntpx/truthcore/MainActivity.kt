@@ -18,7 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import com.ntpx.truthcore.core.chat.ConversationEngine
+import com.ntpx.truthcore.core.TruthCoreRuntime
 import com.ntpx.truthcore.core.model.ModelConfig
 import com.ntpx.truthcore.core.model.ModelProvider
 import com.ntpx.truthcore.core.model.ModelRequest
@@ -26,16 +26,12 @@ import com.ntpx.truthcore.core.model.OpenAICompatibleProvider
 import com.ntpx.truthcore.voice.VoiceController
 import java.util.concurrent.Executors
 
-data class ChatMessage(
-    val speaker: Speaker,
-    val text: String,
-    val status: String? = null,
-)
-
+data class ChatMessage(val speaker: Speaker, val text: String, val status: String? = null)
 enum class Speaker { USER, TRUTHCORE }
 
 class MainActivity : ComponentActivity() {
     private lateinit var voice: VoiceController
+    private lateinit var runtime: TruthCoreRuntime
     private var startVoiceAfterPermission = false
     private val modelExecutor = Executors.newSingleThreadExecutor()
 
@@ -46,14 +42,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        runtime = TruthCoreRuntime(applicationContext)
         setContent {
-            val engine = remember { ConversationEngine() }
             val messages = remember {
                 mutableStateListOf(
                     ChatMessage(
-                        speaker = Speaker.TRUTHCORE,
-                        text = "TruthCore is ready. The truth gate stays between the model and factual release. Open Model settings to connect an HTTPS provider.",
-                        status = "LOCAL",
+                        Speaker.TRUTHCORE,
+                        "TruthCore v1 runtime is ready. ClaimLock, persistent memory, evidence retrieval, permissioned agent tools, and the audit chain are active. Connect a model for open-ended reasoning.",
+                        "LOCAL",
                     )
                 )
             }
@@ -64,6 +60,7 @@ class MainActivity : ComponentActivity() {
             var providerStatus by remember { mutableStateOf("Disconnected") }
             var modelBusy by remember { mutableStateOf(false) }
             var settingsOpen by remember { mutableStateOf(false) }
+            var helpOpen by remember { mutableStateOf(false) }
             var baseUrl by remember { mutableStateOf("") }
             var modelName by remember { mutableStateOf("") }
             var apiKey by remember { mutableStateOf("") }
@@ -83,13 +80,7 @@ class MainActivity : ComponentActivity() {
             }
 
             val connectProvider = {
-                val candidate = OpenAICompatibleProvider(
-                    ModelConfig(
-                        baseUrl = baseUrl,
-                        model = modelName,
-                        apiKey = apiKey,
-                    )
-                )
+                val candidate = OpenAICompatibleProvider(ModelConfig(baseUrl, modelName, apiKey))
                 val validation = candidate.validate()
                 if (validation != null) {
                     providerStatus = validation
@@ -126,7 +117,7 @@ class MainActivity : ComponentActivity() {
                     modelBusy = true
                     val providerSnapshot = modelProvider
                     modelExecutor.execute {
-                        val reply = engine.respond(request, providerSnapshot)
+                        val reply = runtime.respond(request, providerSnapshot)
                         runOnUiThread {
                             modelBusy = false
                             messages += ChatMessage(Speaker.TRUTHCORE, reply.text, reply.status)
@@ -139,39 +130,26 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 Surface(Modifier.fillMaxSize()) {
                     Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Header(
-                            voiceState = voiceState,
-                            modelConnected = modelProvider != null,
-                            modelBusy = modelBusy,
-                        )
+                        Header(voiceState, modelProvider != null, modelBusy)
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            Text(
-                                providerStatus,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TextButton(onClick = { settingsOpen = !settingsOpen }) {
-                                Text(if (settingsOpen) "Hide settings" else "Model settings")
-                            }
+                            Text(providerStatus, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { helpOpen = !helpOpen }) { Text(if (helpOpen) "Hide commands" else "Commands") }
+                            TextButton(onClick = { settingsOpen = !settingsOpen }) { Text(if (settingsOpen) "Hide settings" else "Model settings") }
                         }
+
+                        if (helpOpen) RuntimeCommandsCard()
 
                         if (settingsOpen) {
                             ModelSettingsPanel(
-                                baseUrl = baseUrl,
-                                modelName = modelName,
-                                apiKey = apiKey,
-                                busy = modelBusy,
-                                connected = modelProvider != null,
+                                baseUrl, modelName, apiKey, modelBusy, modelProvider != null,
                                 onBaseUrlChange = { baseUrl = it },
                                 onModelNameChange = { modelName = it },
                                 onApiKeyChange = { apiKey = it },
@@ -186,15 +164,11 @@ class MainActivity : ComponentActivity() {
 
                         LazyColumn(
                             state = listState,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
+                            modifier = Modifier.fillMaxWidth().weight(1f),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                             contentPadding = PaddingValues(vertical = 4.dp),
                         ) {
-                            items(messages) { message ->
-                                MessageBubble(message)
-                            }
+                            items(messages) { MessageBubble(it) }
                         }
 
                         HorizontalDivider()
@@ -203,7 +177,7 @@ class MainActivity : ComponentActivity() {
                             value = input,
                             onValueChange = { input = it },
                             label = { Text("Message TruthCore") },
-                            placeholder = { Text("Type a message or tap Mic") },
+                            placeholder = { Text("Ask, remember, retrieve, or run an agent task") },
                             modifier = Modifier.fillMaxWidth(),
                             minLines = 1,
                             maxLines = 4,
@@ -215,27 +189,16 @@ class MainActivity : ComponentActivity() {
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Button(
-                                onClick = submit,
-                                enabled = input.isNotBlank() && !modelBusy,
-                                modifier = Modifier.weight(1f),
-                            ) {
+                            Button(onClick = submit, enabled = input.isNotBlank() && !modelBusy, modifier = Modifier.weight(1f)) {
                                 Text(if (modelBusy) "Working…" else "Send")
                             }
-                            OutlinedButton(
-                                onClick = { ensureMicThenStart() },
-                                enabled = !modelBusy,
-                            ) {
-                                Text("Mic")
-                            }
+                            OutlinedButton(onClick = { ensureMicThenStart() }, enabled = !modelBusy) { Text("Mic") }
                             OutlinedButton(onClick = {
                                 if (::voice.isInitialized) {
                                     voice.cancel()
                                     voice.stopSpeaking()
                                 }
-                            }) {
-                                Text("Stop")
-                            }
+                            }) { Text("Stop") }
                         }
 
                         Row(
@@ -251,7 +214,7 @@ class MainActivity : ComponentActivity() {
                         }
 
                         Text(
-                            "Remote models are untrusted drafts. Factual answers still pass through ClaimLock. API keys remain in volatile app memory only.",
+                            "Remote models are untrusted drafts. Factual answers pass through evidence + ClaimLock. Writes require single-use approval and actions are audit chained.",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -262,6 +225,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         modelExecutor.shutdownNow()
+        if (::runtime.isInitialized) runtime.close()
         super.onDestroy()
     }
 
@@ -279,25 +243,28 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun Header(voiceState: String, modelConnected: Boolean, modelBusy: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            "NTPX TruthCore",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
-        )
-        Text(
-            "Android Cognitive Agent OS · v0.5.2 alpha",
-            style = MaterialTheme.typography.labelLarge,
-        )
+        Text("NTPX TruthCore", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("Cognitive Agent OS · v1.0 source-completion build", style = MaterialTheme.typography.labelLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusPill("Truth gate ON")
             StatusPill("Voice: $voiceState")
-            StatusPill(
-                when {
-                    modelBusy -> "Model: BUSY"
-                    modelConnected -> "Model: ON"
-                    else -> "Model: OFF"
-                }
-            )
+            StatusPill(if (modelBusy) "Model: BUSY" else if (modelConnected) "Model: ON" else "Model: OFF")
+        }
+    }
+}
+
+@Composable
+private fun RuntimeCommandsCard() {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Runtime commands", style = MaterialTheme.typography.titleMedium)
+            Text("remember that <text>  → proposes a persistent-memory write", style = MaterialTheme.typography.bodySmall)
+            Text("approve <token>  → executes one bound pending write", style = MaterialTheme.typography.bodySmall)
+            Text("what do you remember about <topic>", style = MaterialTheme.typography.bodySmall)
+            Text("search knowledge for <topic>", style = MaterialTheme.typography.bodySmall)
+            Text("add knowledge: <label> | <content>  → approval gated", style = MaterialTheme.typography.bodySmall)
+            Text("agent: <goal>  → bounded model-planned tool run", style = MaterialTheme.typography.bodySmall)
+            Text("list tools · audit status", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -316,104 +283,36 @@ private fun ModelSettingsPanel(
     onDisconnect: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("HTTPS chat provider", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Enter the base URL for an OpenAI-compatible HTTPS chat endpoint. TruthCore appends /chat/completions when needed.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            OutlinedTextField(
-                value = baseUrl,
-                onValueChange = onBaseUrlChange,
-                label = { Text("Base URL") },
-                placeholder = { Text("https://provider.example/v1") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !busy,
-            )
-            OutlinedTextField(
-                value = modelName,
-                onValueChange = onModelNameChange,
-                label = { Text("Model") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !busy,
-            )
-            OutlinedTextField(
-                value = apiKey,
-                onValueChange = onApiKeyChange,
-                label = { Text("API key (optional for self-hosted endpoints)") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !busy,
-            )
+            Text("Enter an OpenAI-compatible HTTPS base URL. TruthCore appends /chat/completions when needed.", style = MaterialTheme.typography.bodySmall)
+            OutlinedTextField(baseUrl, onBaseUrlChange, label = { Text("Base URL") }, placeholder = { Text("https://provider.example/v1") }, singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = !busy)
+            OutlinedTextField(modelName, onModelNameChange, label = { Text("Model") }, singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = !busy)
+            OutlinedTextField(apiKey, onApiKeyChange, label = { Text("API key (optional for self-hosted endpoints)") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), enabled = !busy)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = onConnect,
-                    enabled = !busy && baseUrl.isNotBlank() && modelName.isNotBlank(),
-                ) {
-                    Text(if (connected) "Reconnect & test" else "Connect & test")
-                }
-                if (connected) {
-                    OutlinedButton(onClick = onDisconnect, enabled = !busy) {
-                        Text("Disconnect")
-                    }
-                }
+                Button(onClick = onConnect, enabled = !busy && baseUrl.isNotBlank() && modelName.isNotBlank()) { Text(if (connected) "Reconnect & test" else "Connect & test") }
+                if (connected) OutlinedButton(onClick = onDisconnect, enabled = !busy) { Text("Disconnect") }
             }
-            Text(
-                "The API key is not written to preferences, files, logs, GitHub, or saved instance state.",
-                style = MaterialTheme.typography.bodySmall,
-            )
+            Text("The API key is not written to preferences, files, logs, GitHub, or saved instance state.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
 @Composable
 private fun StatusPill(text: String) {
-    Surface(
-        shape = RoundedCornerShape(999.dp),
-        tonalElevation = 2.dp,
-    ) {
-        Text(
-            text = text,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            style = MaterialTheme.typography.labelMedium,
-        )
+    Surface(shape = RoundedCornerShape(999.dp), tonalElevation = 2.dp) {
+        Text(text, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium)
     }
 }
 
 @Composable
 private fun MessageBubble(message: ChatMessage) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (message.speaker == Speaker.USER) Arrangement.End else Arrangement.Start,
-    ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(0.9f),
-            shape = RoundedCornerShape(18.dp),
-            tonalElevation = if (message.speaker == Speaker.USER) 4.dp else 1.dp,
-        ) {
-            Column(
-                modifier = Modifier.padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        if (message.speaker == Speaker.USER) "You" else "TruthCore",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    message.status?.let {
-                        Text(it, style = MaterialTheme.typography.labelSmall)
-                    }
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = if (message.speaker == Speaker.USER) Arrangement.End else Arrangement.Start) {
+        Surface(modifier = Modifier.fillMaxWidth(0.9f), shape = RoundedCornerShape(18.dp), tonalElevation = if (message.speaker == Speaker.USER) 4.dp else 1.dp) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (message.speaker == Speaker.USER) "You" else "TruthCore", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    message.status?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
                 }
                 Text(message.text, style = MaterialTheme.typography.bodyLarge)
             }
