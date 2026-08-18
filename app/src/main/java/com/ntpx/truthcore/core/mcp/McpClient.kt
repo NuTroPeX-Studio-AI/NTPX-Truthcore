@@ -2,7 +2,6 @@ package com.ntpx.truthcore.core.mcp
 
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
@@ -54,11 +53,11 @@ class McpClient(private val config: McpConfig) {
             buildList {
                 for (i in 0 until tools.length()) {
                     val tool = tools.optJSONObject(i) ?: continue
-                    val name = tool.optString("name").trim()
-                    if (name.isBlank()) continue
+                    val toolName = tool.optString("name").trim()
+                    if (toolName.isBlank()) continue
                     add(
                         McpTool(
-                            name = name,
+                            name = toolName,
                             description = tool.optString("description"),
                             inputSchema = tool.optJSONObject("inputSchema")?.toString() ?: "{}",
                         )
@@ -108,7 +107,7 @@ class McpClient(private val config: McpConfig) {
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val raw = stream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
+            val raw = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (status !in 200..299) return McpResult(false, error = "MCP HTTP $status: ${raw.take(500)}")
             val contentType = connection.contentType.orEmpty().lowercase()
             val json = if (contentType.contains("text/event-stream")) extractSseJson(raw) else raw.trim()
