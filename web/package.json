@@ -6,6 +6,6 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check server.mjs && node --check src/evidence.mjs && node --check src/claimlock.mjs && node --check src/conversation.mjs && node --check src/provider.mjs && node --check public/store.js && node --check public/app.js && node --check public/sw.js"
+    "check": "node --check server.mjs && node --check src/evidence.mjs && node --check src/claimlock.mjs && node --check src/conversation.mjs && node --check src/provider.mjs && node --check src/semantic.mjs && node --check public/store.js && node --check public/app.js && node --check public/sw.js"
   }
 }
