@@ -75,7 +75,7 @@ class OpenAICompatibleProvider(
                     JSONObject(body).optJSONObject("error")?.optString("message").orEmpty()
                 }.getOrDefault("")
                 val detail = providerMessage.ifBlank { "HTTP $code" }
-                return ModelResponse(false, error = "Model request failed: ${detail.take(220)}")
+                return ModelResponse(false, error = "Model request failed: ${redact(detail).take(220)}")
             }
 
             val root = JSONObject(body)
@@ -106,6 +106,8 @@ class OpenAICompatibleProvider(
     }
 
     private fun safeMessage(t: Throwable): String =
-        t.message?.replace(config.apiKey, "***")?.take(220)?.ifBlank { null }
-            ?: t::class.java.simpleName
+        redact(t.message.orEmpty()).take(220).ifBlank { t::class.java.simpleName }
+
+    private fun redact(value: String): String =
+        if (config.apiKey.isBlank()) value else value.replace(config.apiKey, "***")
 }
