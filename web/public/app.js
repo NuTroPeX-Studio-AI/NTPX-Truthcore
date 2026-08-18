@@ -35,7 +35,7 @@ const state = {
   pending: new Map(),
 };
 
-addMessage("TruthCore", "TruthCore Web v1 runtime is ready. ClaimLock, persistent local memory/knowledge, bounded browser tools, and the local audit chain are active. Connect a model for open-ended reasoning.", "LOCAL");
+addMessage("TruthCore", "TruthCore Web v1 runtime is ready. ClaimLock, persistent local memory/knowledge, bounded browser tools, multi-agent review, and the local audit chain are active. Connect a model for open-ended reasoning.", "LOCAL");
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
@@ -107,6 +107,13 @@ async function submit() {
     if (local) {
       addMessage("TruthCore", local.text, local.status);
       if (elements.speak.checked) speak(local.text);
+      return;
+    }
+
+    if (/^(team:|\/team\s+|review team:\s*)/i.test(message)) {
+      const reply = await runTeam(message.replace(/^(team:|\/team\s+|review team:\s*)/i, "").trim());
+      addMessage("TruthCore", reply.text, reply.status);
+      if (elements.speak.checked) speak(reply.text);
       return;
     }
 
@@ -189,6 +196,18 @@ async function executeApproval(token) {
     return { text: `Saved knowledge ${record.id}.`, status: "ACTION_EXECUTED" };
   }
   return { text: "The pending tool is no longer allowed.", status: "ACTION_DENIED" };
+}
+
+async function runTeam(goal) {
+  if (!state.provider) return { text: "A model provider is required for the multi-agent review team.", status: "ABSTAINED" };
+  const response = await fetch("/api/team", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal, provider: state.provider }),
+  });
+  const body = await response.json();
+  if (!response.ok || !body.ok) return { text: body.error || "Team review failed.", status: body.status || "PROVIDER_ERROR" };
+  return { text: body.text, status: body.status || "TEAM_GENERATED" };
 }
 
 async function runAgent(task) {
