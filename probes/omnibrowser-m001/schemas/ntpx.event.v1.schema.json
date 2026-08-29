@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ntpx.event/v1",
+  "title": "NTPX Event v1",
+  "type": "object",
+  "required": ["schema_version", "event_id", "event_type", "occurred_at", "producer", "payload", "trace_id", "correlation_id", "chain_id", "sequence"],
+  "properties": {
+    "schema_version": {"const": "ntpx.event/v1"},
+    "event_id": {"type": "string", "format": "uuid"},
+    "event_type": {"type": "string", "minLength": 1},
+    "occurred_at": {"type": "string", "minLength": 1},
+    "producer": {"type": "object", "required": ["id", "type"], "properties": {"id": {"type": "string", "format": "uuid"}, "type": {"type": "string", "minLength": 1}, "version": {"type": ["string", "null"]}}, "additionalProperties": true},
+    "payload": {},
+    "trace_id": {"type": "string", "format": "uuid"},
+    "correlation_id": {"type": "string", "format": "uuid"},
+    "causation_id": {"type": ["string", "null"], "format": "uuid"},
+    "chain_id": {"type": "string", "format": "uuid"},
+    "parent_chain_id": {"type": ["string", "null"], "format": "uuid"},
+    "sequence": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": true
+}
