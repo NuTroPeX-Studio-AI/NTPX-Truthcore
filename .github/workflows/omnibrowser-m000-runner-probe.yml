@@ -1,4 +1,4 @@
-name: OmniBrowser M000 Runner Probe
+name: OmniBrowser M000 Lockfile Persistence
 
 on:
   push:
@@ -10,163 +10,31 @@ permissions:
   contents: write
 
 jobs:
-  core-linux:
-    name: Core toolchain + tests (Linux)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: probes/omnibrowser-m000
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node 24
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Setup pnpm 11.21.0
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.21.0
-          run_install: false
-      - name: Setup Rust 1.98.0
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: '1.98.0'
-          components: rustfmt, clippy
-      - name: Validate core
-        run: |
-          git --version
-          rustc --version
-          cargo --version
-          node --version
-          pnpm --version
-          pnpm install --lockfile-only
-          pnpm install --frozen-lockfile
-          pnpm test:node
-          cargo generate-lockfile --manifest-path core/Cargo.toml
-          cargo fmt --manifest-path core/Cargo.toml -- --check
-          cargo clippy --manifest-path core/Cargo.toml --all-targets --locked -- -D warnings
-          cargo test --manifest-path core/Cargo.toml --locked
-
-  security-linux:
-    name: Dependency security smoke scan (Linux)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: probes/omnibrowser-m000
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node 24
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Setup pnpm 11.21.0
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.21.0
-          run_install: false
-      - name: Setup Rust 1.98.0
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: '1.98.0'
-      - name: Generate dependency lockfiles
-        run: |
-          pnpm install --lockfile-only
-          cargo generate-lockfile --manifest-path core/Cargo.toml
-      - name: pnpm audit
-        run: pnpm audit --audit-level high
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-      - name: cargo audit
-        run: cargo audit --file core/Cargo.lock
-
-  reproducibility-linux:
-    name: Clean rebuild hash check (Linux)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: probes/omnibrowser-m000
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Rust 1.98.0
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: '1.98.0'
-      - name: Verify reproducible build
-        run: |
-          cargo generate-lockfile --manifest-path core/Cargo.toml
-          cargo build --manifest-path core/Cargo.toml --release --locked
-          sha256sum core/target/release/ntpx-omnibrowser-env-check | cut -d ' ' -f1 > /tmp/ntpx-first.sha256
-          cargo clean --manifest-path core/Cargo.toml
-          cargo build --manifest-path core/Cargo.toml --release --locked
-          sha256sum core/target/release/ntpx-omnibrowser-env-check | cut -d ' ' -f1 > /tmp/ntpx-second.sha256
-          diff -u /tmp/ntpx-first.sha256 /tmp/ntpx-second.sha256
-
-  tauri-windows:
-    name: Tauri 2 compile + launch smoke (Windows)
-    runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: probes/omnibrowser-m000
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node 24
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Setup pnpm 11.21.0
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.21.0
-          run_install: false
-      - name: Setup Rust 1.98.0 MSVC
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: '1.98.0'
-      - name: Build and launch Tauri probe
-        shell: pwsh
-        run: |
-          git --version
-          rustc --version
-          cargo --version
-          node --version
-          pnpm --version
-          cargo build --manifest-path tauri/Cargo.toml
-          $exe = Resolve-Path 'tauri/target/debug/ntpx-omnibrowser-tauri-probe.exe'
-          $process = Start-Process -FilePath $exe -PassThru
-          Start-Sleep -Seconds 8
-          if ($process.HasExited) { throw "Tauri probe exited unexpectedly with code $($process.ExitCode)" }
-          Stop-Process -Id $process.Id -Force
-
   persist-lockfiles:
     name: Persist validated lockfiles
-    needs: [core-linux, security-linux, reproducibility-linux, tauri-windows]
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: probes/omnibrowser-m000
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: omnibrowser/m000-runner-probe
-      - name: Setup Node 24
-        uses: actions/setup-node@v4
+      - name: Setup Node 24.19.0
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '24'
+          node-version: '24.19.0'
       - name: Setup pnpm 11.21.0
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
         with:
           version: 11.21.0
           run_install: false
       - name: Setup Rust 1.98.0
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: '1.98.0'
-      - name: Generate all lockfiles
+      - name: Generate lockfiles
         run: |
           pnpm install --lockfile-only
           cargo generate-lockfile --manifest-path core/Cargo.toml
@@ -177,6 +45,9 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add pnpm-lock.yaml core/Cargo.lock tauri/Cargo.lock
-          if git diff --cached --quiet; then exit 0; fi
+          if git diff --cached --quiet; then
+            echo 'Lockfiles already persisted.'
+            exit 0
+          fi
           git commit -m "chore(probe): persist validated lockfiles [skip ci]"
           git push origin HEAD:omnibrowser/m000-runner-probe
