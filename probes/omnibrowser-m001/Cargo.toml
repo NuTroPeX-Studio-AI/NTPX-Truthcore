@@ -5,7 +5,10 @@ members = [
   "packages/core-object",
   "packages/core-action",
   "packages/core-task",
-  "packages/core-artifact"
+  "packages/core-artifact",
+  "packages/runtime-control",
+  "packages/event-runtime",
+  "packages/module-kernel"
 ]
 resolver = "3"
 
