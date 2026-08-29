@@ -28,8 +28,10 @@ jobs:
       - name: Generate dependency lock
         run: cargo generate-lockfile
       - name: Validate workspace metadata
-        run: cargo metadata --locked --no-deps > /dev/null
-      - name: Rust formatting
+        run: cargo metadata --format-version 1 --locked --no-deps > /dev/null
+      - name: Canonical Rust formatting
+        run: cargo fmt --all
+      - name: Verify formatted tree
         run: cargo fmt --all -- --check
       - name: Clippy with warnings denied
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -41,12 +43,12 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: Dependency vulnerability audit
         run: cargo audit --file Cargo.lock
-      - name: Persist validated lockfile
+      - name: Persist validated formatting and lockfile
         shell: bash
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add Cargo.lock
+          git add Cargo.lock packages
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m "chore(probe): persist M001 validated Cargo.lock [skip ci]"
+          git commit -m "chore(probe): persist validated M001 formatting and lock [skip ci]"
           git push origin HEAD:omnibrowser/m001-core-primitives-probe
