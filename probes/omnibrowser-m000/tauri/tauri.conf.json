@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "NTPX OmniBrowser M000 Runner Probe",
+  "version": "0.0.0",
+  "identifier": "com.ntpx.omnibrowser.runnerprobe",
+  "build": {
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "NTPX OmniBrowser M000 Runner Probe",
+        "width": 900,
+        "height": 600
+      }
+    ]
+  },
+  "bundle": {
+    "active": false
+  }
+}
