@@ -49,6 +49,7 @@ pub struct ModuleDependency {
     pub version_constraint: Option<SemVer>,
     pub required: bool,
 }
+
 impl ModuleDependency {
     pub fn validate(&self) -> Result<(), CoreValidationError> {
         validate_non_nil("module.dependency.module_id", self.module_id)?;
@@ -72,6 +73,7 @@ pub struct ModuleManifest {
     pub health_check: Option<String>,
     pub help_ref: Option<String>,
 }
+
 impl ModuleManifest {
     pub fn new(
         module_id: Uuid,
@@ -94,6 +96,7 @@ impl ModuleManifest {
             help_ref: None,
         }
     }
+
     pub fn validate(&self) -> Result<(), CoreValidationError> {
         if self.schema_version != NTPX_MODULE_SCHEMA {
             return Err(CoreValidationError::InvalidState("module.schema_version"));
@@ -126,13 +129,41 @@ impl ModuleManifest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModuleSelfTestReport {
+    pub passed: bool,
+    pub summary: String,
+    pub checked_at: Iso8601,
+}
+
+impl ModuleSelfTestReport {
+    pub fn validate(&self) -> Result<(), CoreValidationError> {
+        validate_non_empty("module.self_test.summary", &self.summary)?;
+        validate_non_empty("module.self_test.checked_at", &self.checked_at)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModuleRecord {
     pub manifest: ModuleManifest,
     pub lifecycle: ModuleLifecycleState,
     pub health: ModuleHealth,
     pub control: ToggleControl,
+    pub last_self_test: Option<ModuleSelfTestReport>,
     pub registered_at: Iso8601,
     pub updated_at: Iso8601,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ModuleKernelSnapshot {
+    pub total: usize,
+    pub running: usize,
+    pub degraded: usize,
+    pub faulted: usize,
+    pub quarantined: usize,
+    pub blocked: usize,
+    pub disabled_or_stopped: usize,
+    pub event_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,18 +187,20 @@ pub enum ModuleKernelError {
         to: ModuleLifecycleState,
     },
 }
+
 impl From<CoreValidationError> for ModuleKernelError {
     fn from(value: CoreValidationError) -> Self {
         Self::Validation(value)
     }
 }
+
 impl From<EventRuntimeError> for ModuleKernelError {
     fn from(value: EventRuntimeError) -> Self {
         Self::Event(value)
     }
 }
 
-fn initial_lifecycle_for(state: ControlState) -> ModuleLifecycleState {
+fn lifecycle_for_control(state: ControlState) -> ModuleLifecycleState {
     if state == ControlState::Denied {
         ModuleLifecycleState::Blocked
     } else if state_enables_execution(state) {
@@ -177,15 +210,25 @@ fn initial_lifecycle_for(state: ControlState) -> ModuleLifecycleState {
     }
 }
 
+fn lifecycle_event(state: ModuleLifecycleState) -> &'static str {
+    match state {
+        ModuleLifecycleState::Enabled => "MODULE_ENABLED",
+        ModuleLifecycleState::Blocked => "MODULE_BLOCKED",
+        _ => "MODULE_DISABLED",
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ModuleKernel {
     modules: BTreeMap<Uuid, ModuleRecord>,
     events: EventBus,
 }
+
 impl ModuleKernel {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn register(
         &mut self,
         manifest: ModuleManifest,
@@ -199,7 +242,7 @@ impl ModuleKernel {
         }
         let now = now.into();
         let actor = actor.into();
-        let initial_lifecycle = initial_lifecycle_for(manifest.default_state);
+        let final_lifecycle = lifecycle_for_control(manifest.default_state);
         let control = ToggleControl::new(
             format!("module://{}", manifest.module_id),
             TargetType::Module,
@@ -213,16 +256,39 @@ impl ModuleKernel {
         let module_id = manifest.module_id;
         let record = ModuleRecord {
             manifest,
-            lifecycle: initial_lifecycle,
+            lifecycle: ModuleLifecycleState::Discovered,
             health: ModuleHealth::Unknown,
             control,
+            last_self_test: None,
             registered_at: now.clone(),
             updated_at: now.clone(),
         };
         self.modules.insert(module_id, record);
-        self.emit(module_id, "MODULE_REGISTERED", now, trace_id, None)?;
+        self.emit(module_id, "MODULE_DISCOVERED", now.clone(), trace_id)?;
+        self.transition(
+            module_id,
+            ModuleLifecycleState::Validated,
+            now.clone(),
+            trace_id,
+            "MODULE_VALIDATED",
+        )?;
+        self.transition(
+            module_id,
+            ModuleLifecycleState::Registered,
+            now.clone(),
+            trace_id,
+            "MODULE_REGISTERED",
+        )?;
+        self.transition(
+            module_id,
+            final_lifecycle,
+            now,
+            trace_id,
+            lifecycle_event(final_lifecycle),
+        )?;
         Ok(())
     }
+
     pub fn set_control(
         &mut self,
         module_id: Uuid,
@@ -250,6 +316,10 @@ impl ModuleKernel {
             }
             _ => {}
         }
+
+        let previous_control = record.control.clone();
+        let previous_lifecycle = record.lifecycle;
+        let previous_updated_at = record.updated_at.clone();
         record.control.requested_state = requested_state;
         record.control.effective_state = requested_state;
         record.control.requested_by = actor;
@@ -257,8 +327,14 @@ impl ModuleKernel {
         record.control.reason = None;
         record.control.policy_source = None;
         record.control.trace_id = trace_id;
-        record.control.validate()?;
+        if let Err(error) = record.control.validate() {
+            record.control = previous_control;
+            record.lifecycle = previous_lifecycle;
+            record.updated_at = previous_updated_at;
+            return Err(ModuleKernelError::Validation(error));
+        }
         record.updated_at = now.clone();
+
         if !matches!(
             record.lifecycle,
             ModuleLifecycleState::Faulted
@@ -288,21 +364,37 @@ impl ModuleKernel {
                 record.lifecycle = ModuleLifecycleState::Disabled;
             }
         }
-        self.emit(module_id, "MODULE_CONTROL_CHANGED", now, trace_id, None)?;
+        self.emit(module_id, "MODULE_CONTROL_CHANGED", now, trace_id)?;
         Ok(())
     }
+
     pub fn set_control_lock(
         &mut self,
         module_id: Uuid,
         lock: ControlLock,
+        now: impl Into<Iso8601>,
+        actor: impl Into<String>,
+        trace_id: Uuid,
     ) -> Result<(), ModuleKernelError> {
+        let now = now.into();
+        let actor = actor.into();
         let record = self
             .modules
             .get_mut(&module_id)
             .ok_or(ModuleKernelError::UnknownModule(module_id))?;
-        record.control.set_lock(lock)?;
+        let previous = record.control.clone();
+        record.control.requested_by = actor;
+        record.control.changed_at = now.clone();
+        record.control.trace_id = trace_id;
+        if let Err(error) = record.control.set_lock(lock) {
+            record.control = previous;
+            return Err(ModuleKernelError::Validation(error));
+        }
+        record.updated_at = now.clone();
+        self.emit(module_id, "MODULE_CONTROL_LOCK_CHANGED", now, trace_id)?;
         Ok(())
     }
+
     pub fn start(
         &mut self,
         module_id: Uuid,
@@ -350,6 +442,7 @@ impl ModuleKernel {
         )?;
         Ok(())
     }
+
     pub fn suspend(
         &mut self,
         module_id: Uuid,
@@ -379,6 +472,7 @@ impl ModuleKernel {
             "MODULE_SUSPENDED",
         )
     }
+
     pub fn stop(
         &mut self,
         module_id: Uuid,
@@ -419,6 +513,7 @@ impl ModuleKernel {
             "MODULE_STOPPED",
         )
     }
+
     pub fn quarantine(
         &mut self,
         module_id: Uuid,
@@ -433,6 +528,7 @@ impl ModuleKernel {
             "MODULE_QUARANTINED",
         )
     }
+
     pub fn report_health(
         &mut self,
         module_id: Uuid,
@@ -446,6 +542,7 @@ impl ModuleKernel {
             .get_mut(&module_id)
             .ok_or(ModuleKernelError::UnknownModule(module_id))?;
         record.health = health;
+        record.control.health_state = Some(format!("{health:?}").to_uppercase());
         record.updated_at = now.clone();
         if health == ModuleHealth::Degraded && record.lifecycle == ModuleLifecycleState::Running {
             record.lifecycle = ModuleLifecycleState::Degraded;
@@ -458,21 +555,115 @@ impl ModuleKernel {
         {
             record.lifecycle = ModuleLifecycleState::Faulted;
         }
-        self.emit(module_id, "MODULE_HEALTH_CHANGED", now, trace_id, None)?;
+        self.emit(module_id, "MODULE_HEALTH_CHANGED", now, trace_id)?;
         Ok(())
     }
+
+    pub fn record_self_test(
+        &mut self,
+        module_id: Uuid,
+        report: ModuleSelfTestReport,
+        trace_id: Uuid,
+    ) -> Result<(), ModuleKernelError> {
+        report.validate()?;
+        let now = report.checked_at.clone();
+        let event_type = if report.passed {
+            "MODULE_SELF_TEST_PASSED"
+        } else {
+            "MODULE_SELF_TEST_FAILED"
+        };
+        let record = self
+            .modules
+            .get_mut(&module_id)
+            .ok_or(ModuleKernelError::UnknownModule(module_id))?;
+        record.health = if report.passed {
+            ModuleHealth::Healthy
+        } else {
+            ModuleHealth::Unhealthy
+        };
+        record.control.health_state = Some(if report.passed {
+            "HEALTHY".to_owned()
+        } else {
+            "UNHEALTHY".to_owned()
+        });
+        if !report.passed
+            && matches!(
+                record.lifecycle,
+                ModuleLifecycleState::Running | ModuleLifecycleState::Degraded
+            )
+        {
+            record.lifecycle = ModuleLifecycleState::Faulted;
+        }
+        record.last_self_test = Some(report);
+        record.updated_at = now.clone();
+        self.emit(module_id, event_type, now, trace_id)?;
+        Ok(())
+    }
+
+    pub fn recover(
+        &mut self,
+        module_id: Uuid,
+        now: impl Into<Iso8601>,
+        trace_id: Uuid,
+    ) -> Result<(), ModuleKernelError> {
+        let now = now.into();
+        let record = self
+            .modules
+            .get_mut(&module_id)
+            .ok_or(ModuleKernelError::UnknownModule(module_id))?;
+        if record.lifecycle != ModuleLifecycleState::Faulted {
+            return Err(ModuleKernelError::InvalidTransition {
+                module_id,
+                from: record.lifecycle,
+                to: ModuleLifecycleState::Enabled,
+            });
+        }
+        record.lifecycle = lifecycle_for_control(record.control.effective_state);
+        record.health = ModuleHealth::Unknown;
+        record.control.health_state = Some("UNKNOWN".to_owned());
+        record.updated_at = now.clone();
+        self.emit(module_id, "MODULE_RECOVERED", now, trace_id)?;
+        Ok(())
+    }
+
     pub fn module(&self, module_id: Uuid) -> Option<&ModuleRecord> {
         self.modules.get(&module_id)
     }
+
     pub fn modules(&self) -> impl Iterator<Item = &ModuleRecord> {
         self.modules.values()
     }
+
+    pub fn snapshot(&self) -> ModuleKernelSnapshot {
+        let mut snapshot = ModuleKernelSnapshot {
+            total: self.modules.len(),
+            event_count: self.events.len(),
+            ..ModuleKernelSnapshot::default()
+        };
+        for module in self.modules.values() {
+            match module.lifecycle {
+                ModuleLifecycleState::Running => snapshot.running += 1,
+                ModuleLifecycleState::Degraded => snapshot.degraded += 1,
+                ModuleLifecycleState::Faulted => snapshot.faulted += 1,
+                ModuleLifecycleState::Quarantined => snapshot.quarantined += 1,
+                ModuleLifecycleState::Blocked => snapshot.blocked += 1,
+                ModuleLifecycleState::Disabled | ModuleLifecycleState::Stopped => {
+                    snapshot.disabled_or_stopped += 1;
+                }
+                _ => {}
+            }
+        }
+        snapshot
+    }
+
     pub fn event_bus(&self) -> &EventBus {
         &self.events
     }
+
     pub fn event_bus_mut(&mut self) -> &mut EventBus {
         &mut self.events
     }
+
     fn check_dependencies(&self, module_id: Uuid) -> Result<(), ModuleKernelError> {
         let record = self
             .modules
@@ -502,6 +693,7 @@ impl ModuleKernel {
         }
         Ok(())
     }
+
     fn transition(
         &mut self,
         module_id: Uuid,
@@ -516,30 +708,37 @@ impl ModuleKernel {
             .ok_or(ModuleKernelError::UnknownModule(module_id))?;
         record.lifecycle = state;
         record.updated_at = now.clone();
-        self.emit(module_id, event_type, now, trace_id, None)
+        self.emit(module_id, event_type, now, trace_id)
     }
+
     fn emit(
         &mut self,
         module_id: Uuid,
         event_type: &str,
         now: Iso8601,
         trace_id: Uuid,
-        causation_id: Option<Uuid>,
     ) -> Result<(), ModuleKernelError> {
         let record = self
             .modules
             .get(&module_id)
             .ok_or(ModuleKernelError::UnknownModule(module_id))?;
-        let mut event = NTPXEvent::new(
+        let event = NTPXEvent::new(
             event_type,
             now,
             ObjectRef::new(module_id, "Module", Some(record.manifest.version.clone())),
-            json!({"module_id": module_id, "lifecycle": record.lifecycle, "health": record.health, "requested_state": record.control.requested_state, "effective_state": record.control.effective_state, "lock": record.control.lock}),
+            json!({
+                "module_id": module_id,
+                "lifecycle": record.lifecycle,
+                "health": record.health,
+                "requested_state": record.control.requested_state,
+                "effective_state": record.control.effective_state,
+                "lock": record.control.lock,
+                "self_test": record.last_self_test,
+            }),
             trace_id,
             trace_id,
             trace_id,
         );
-        event.causation_id = causation_id;
         self.events.publish(event)?;
         Ok(())
     }
@@ -548,6 +747,7 @@ impl ModuleKernel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn manifest(name: &str, state: ControlState) -> ModuleManifest {
         ModuleManifest::new(
             Uuid::new_v4(),
@@ -558,6 +758,18 @@ mod tests {
             state,
         )
     }
+
+    #[test]
+    fn module_wire_contract_is_frozen() {
+        let value = serde_json::to_value(manifest("alpha", ControlState::On)).unwrap();
+        assert_eq!(value["schema_version"], NTPX_MODULE_SCHEMA);
+        let schema: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../schemas/ntpx.module.v1.schema.json"
+        ))
+        .unwrap();
+        assert_eq!(schema["$id"], NTPX_MODULE_SCHEMA);
+    }
+
     #[test]
     fn manifest_rejects_self_dependency() {
         let mut value = manifest("alpha", ControlState::On);
@@ -571,6 +783,32 @@ mod tests {
             Err(CoreValidationError::SelfReference("module.dependencies"))
         );
     }
+
+    #[test]
+    fn registration_emits_full_foundation_lifecycle() {
+        let mut kernel = ModuleKernel::new();
+        let value = manifest("alpha", ControlState::On);
+        let trace = Uuid::new_v4();
+        kernel
+            .register(value, "2026-08-29T09:00:00Z", "user:test", trace)
+            .unwrap();
+        let types: Vec<_> = kernel
+            .event_bus()
+            .trace(trace)
+            .into_iter()
+            .map(|event| event.event_type)
+            .collect();
+        assert_eq!(
+            types,
+            vec![
+                "MODULE_DISCOVERED",
+                "MODULE_VALIDATED",
+                "MODULE_REGISTERED",
+                "MODULE_ENABLED"
+            ]
+        );
+    }
+
     #[test]
     fn off_module_cannot_start() {
         let mut kernel = ModuleKernel::new();
@@ -584,6 +822,7 @@ mod tests {
             Err(ModuleKernelError::ControlDisabled(id))
         );
     }
+
     #[test]
     fn denied_module_registers_blocked() {
         let mut kernel = ModuleKernel::new();
@@ -597,6 +836,7 @@ mod tests {
             ModuleLifecycleState::Blocked
         );
     }
+
     #[test]
     fn required_dependency_must_be_running() {
         let mut kernel = ModuleKernel::new();
@@ -643,34 +883,67 @@ mod tests {
             ModuleLifecycleState::Running
         );
     }
+
     #[test]
-    fn lifecycle_changes_emit_traceable_events() {
+    fn control_lock_change_is_audited() {
         let mut kernel = ModuleKernel::new();
         let value = manifest("alpha", ControlState::On);
         let id = value.module_id;
         let trace = Uuid::new_v4();
         kernel
-            .register(value, "2026-08-29T09:00:00Z", "user:test", trace)
+            .register(value, "2026-08-29T09:00:00Z", "user:test", Uuid::new_v4())
             .unwrap();
-        kernel.start(id, "2026-08-29T09:00:01Z", trace).unwrap();
-        let types: Vec<_> = kernel
-            .event_bus()
-            .events()
-            .iter()
-            .map(|event| event.event_type.as_str())
-            .collect();
+        kernel
+            .set_control_lock(
+                id,
+                ControlLock::LockedOn,
+                "2026-08-29T09:00:01Z",
+                "system:test",
+                trace,
+            )
+            .unwrap();
+        assert_eq!(kernel.event_bus().trace(trace).len(), 1);
         assert_eq!(
-            types,
-            vec!["MODULE_REGISTERED", "MODULE_STARTING", "MODULE_STARTED"]
-        );
-        assert!(
-            kernel
-                .event_bus()
-                .events()
-                .iter()
-                .all(|event| event.trace_id == trace)
+            kernel.event_bus().trace(trace)[0].event_type,
+            "MODULE_CONTROL_LOCK_CHANGED"
         );
     }
+
+    #[test]
+    fn failed_self_test_faults_running_module_and_recovery_does_not_restart() {
+        let mut kernel = ModuleKernel::new();
+        let value = manifest("alpha", ControlState::On);
+        let id = value.module_id;
+        kernel
+            .register(value, "2026-08-29T09:00:00Z", "user:test", Uuid::new_v4())
+            .unwrap();
+        kernel
+            .start(id, "2026-08-29T09:00:01Z", Uuid::new_v4())
+            .unwrap();
+        kernel
+            .record_self_test(
+                id,
+                ModuleSelfTestReport {
+                    passed: false,
+                    summary: "dependency handshake failed".into(),
+                    checked_at: "2026-08-29T09:00:02Z".into(),
+                },
+                Uuid::new_v4(),
+            )
+            .unwrap();
+        assert_eq!(
+            kernel.module(id).unwrap().lifecycle,
+            ModuleLifecycleState::Faulted
+        );
+        kernel
+            .recover(id, "2026-08-29T09:00:03Z", Uuid::new_v4())
+            .unwrap();
+        assert_eq!(
+            kernel.module(id).unwrap().lifecycle,
+            ModuleLifecycleState::Enabled
+        );
+    }
+
     #[test]
     fn unhealthy_running_module_faults_closed() {
         let mut kernel = ModuleKernel::new();
@@ -694,5 +967,6 @@ mod tests {
             kernel.module(id).unwrap().lifecycle,
             ModuleLifecycleState::Faulted
         );
+        assert_eq!(kernel.snapshot().faulted, 1);
     }
 }
