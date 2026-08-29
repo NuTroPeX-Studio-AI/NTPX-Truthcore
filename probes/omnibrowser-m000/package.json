@@ -1,0 +1,11 @@
+{
+  "name": "ntpx-omnibrowser-m000-runner-probe",
+  "private": true,
+  "packageManager": "pnpm@11.21.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "test:node": "node --experimental-strip-types --test tests/smoke.test.ts"
+  }
+}
