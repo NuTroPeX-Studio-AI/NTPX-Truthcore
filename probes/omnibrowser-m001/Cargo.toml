@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "packages/bootstrap-smoke",
   "packages/core-common",
   "packages/core-object",
   "packages/core-action",
