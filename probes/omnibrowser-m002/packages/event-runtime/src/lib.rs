@@ -25,6 +25,7 @@ pub struct NTPXEvent {
     pub parent_chain_id: Option<Uuid>,
     pub sequence: u64,
 }
+
 impl NTPXEvent {
     pub fn new(
         event_type: impl Into<String>,
@@ -50,6 +51,7 @@ impl NTPXEvent {
             sequence: 0,
         }
     }
+
     pub fn validate(&self) -> Result<(), CoreValidationError> {
         if self.schema_version != NTPX_EVENT_SCHEMA {
             return Err(CoreValidationError::InvalidState("event.schema_version"));
@@ -80,6 +82,7 @@ pub struct EventChain {
     pub started_at: Iso8601,
     pub updated_at: Iso8601,
 }
+
 impl EventChain {
     fn from_first(event: &NTPXEvent) -> Self {
         Self {
@@ -97,10 +100,12 @@ impl EventChain {
 pub enum EventRuntimeError {
     Validation(CoreValidationError),
     DuplicateEvent(Uuid),
+    DuplicateSubscription(String),
     ChainParentMismatch(Uuid),
     UnknownSubscription(String),
     InvalidAck { subscription: String, sequence: u64 },
 }
+
 impl From<CoreValidationError> for EventRuntimeError {
     fn from(value: CoreValidationError) -> Self {
         Self::Validation(value)
@@ -114,6 +119,7 @@ pub struct Subscription {
     pub next_sequence: u64,
     pub pending_sequence: Option<u64>,
 }
+
 impl Subscription {
     pub fn all(id: impl Into<String>) -> Self {
         Self {
@@ -123,6 +129,33 @@ impl Subscription {
             pending_sequence: None,
         }
     }
+
+    pub fn for_types(
+        id: impl Into<String>,
+        event_types: impl IntoIterator<Item = String>,
+    ) -> Result<Self, CoreValidationError> {
+        let id = id.into();
+        validate_non_empty("subscription.id", &id)?;
+        let event_types: BTreeSet<String> = event_types.into_iter().collect();
+        for event_type in &event_types {
+            validate_non_empty("subscription.event_type", event_type)?;
+        }
+        Ok(Self {
+            id,
+            event_types,
+            next_sequence: 1,
+            pending_sequence: None,
+        })
+    }
+
+    fn validate(&self) -> Result<(), CoreValidationError> {
+        validate_non_empty("subscription.id", &self.id)?;
+        for event_type in &self.event_types {
+            validate_non_empty("subscription.event_type", event_type)?;
+        }
+        Ok(())
+    }
+
     fn matches(&self, event: &NTPXEvent) -> bool {
         self.event_types.is_empty() || self.event_types.contains(&event.event_type)
     }
@@ -135,10 +168,12 @@ pub struct EventBus {
     chains: BTreeMap<Uuid, EventChain>,
     subscriptions: BTreeMap<String, Subscription>,
 }
+
 impl EventBus {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn publish(&mut self, mut event: NTPXEvent) -> Result<u64, EventRuntimeError> {
         event.validate()?;
         if self.ids.contains(&event.event_id) {
@@ -146,6 +181,7 @@ impl EventBus {
         }
         let sequence = self.log.len() as u64 + 1;
         event.sequence = sequence;
+
         match self.chains.get_mut(&event.chain_id) {
             Some(chain) => {
                 if chain.parent_chain_id != event.parent_chain_id {
@@ -159,24 +195,34 @@ impl EventBus {
                     .insert(event.chain_id, EventChain::from_first(&event));
             }
         }
+
         self.ids.insert(event.event_id);
         self.log.push(event);
         Ok(sequence)
     }
+
     pub fn register_subscription(
         &mut self,
         subscription: Subscription,
-    ) -> Result<(), CoreValidationError> {
-        validate_non_empty("subscription.id", &subscription.id)?;
+    ) -> Result<(), EventRuntimeError> {
+        subscription.validate()?;
+        if self.subscriptions.contains_key(&subscription.id) {
+            return Err(EventRuntimeError::DuplicateSubscription(subscription.id));
+        }
         self.subscriptions
             .insert(subscription.id.clone(), subscription);
         Ok(())
     }
-    pub fn poll(&mut self, subscription_id: &str) -> Result<Option<NTPXEvent>, EventRuntimeError> {
+
+    pub fn poll(
+        &mut self,
+        subscription_id: &str,
+    ) -> Result<Option<NTPXEvent>, EventRuntimeError> {
         let subscription = self
             .subscriptions
             .get_mut(subscription_id)
             .ok_or_else(|| EventRuntimeError::UnknownSubscription(subscription_id.to_owned()))?;
+
         let start = subscription
             .pending_sequence
             .unwrap_or(subscription.next_sequence);
@@ -185,11 +231,13 @@ impl EventBus {
             .iter()
             .find(|event| event.sequence >= start && subscription.matches(event))
             .cloned();
+
         if let Some(event) = &found {
             subscription.pending_sequence = Some(event.sequence);
         }
         Ok(found)
     }
+
     pub fn ack(&mut self, subscription_id: &str, sequence: u64) -> Result<(), EventRuntimeError> {
         let subscription = self
             .subscriptions
@@ -205,6 +253,11 @@ impl EventBus {
         subscription.next_sequence = sequence + 1;
         Ok(())
     }
+
+    pub fn event(&self, event_id: Uuid) -> Option<&NTPXEvent> {
+        self.log.iter().find(|event| event.event_id == event_id)
+    }
+
     pub fn replay_chain(&self, chain_id: Uuid) -> Vec<NTPXEvent> {
         self.log
             .iter()
@@ -212,17 +265,48 @@ impl EventBus {
             .cloned()
             .collect()
     }
+
+    pub fn trace(&self, trace_id: Uuid) -> Vec<NTPXEvent> {
+        self.log
+            .iter()
+            .filter(|event| event.trace_id == trace_id)
+            .cloned()
+            .collect()
+    }
+
+    pub fn correlated(&self, correlation_id: Uuid) -> Vec<NTPXEvent> {
+        self.log
+            .iter()
+            .filter(|event| event.correlation_id == correlation_id)
+            .cloned()
+            .collect()
+    }
+
     pub fn chain(&self, chain_id: Uuid) -> Option<&EventChain> {
         self.chains.get(&chain_id)
     }
+
     pub fn events(&self) -> &[NTPXEvent] {
         &self.log
+    }
+
+    pub fn len(&self) -> usize {
+        self.log.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.log.is_empty()
+    }
+
+    pub fn subscription_count(&self) -> usize {
+        self.subscriptions.len()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn event(kind: &str, chain_id: Uuid) -> NTPXEvent {
         NTPXEvent::new(
             kind,
@@ -234,11 +318,18 @@ mod tests {
             chain_id,
         )
     }
+
     #[test]
     fn event_wire_contract_is_frozen() {
         let value = serde_json::to_value(event("MODULE_STARTED", Uuid::new_v4())).unwrap();
         assert_eq!(value["schema_version"], NTPX_EVENT_SCHEMA);
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../../schemas/ntpx.event.v1.schema.json"
+        ))
+        .unwrap();
+        assert_eq!(schema["$id"], NTPX_EVENT_SCHEMA);
     }
+
     #[test]
     fn publish_assigns_immutable_sequence_and_chain_order() {
         let chain = Uuid::new_v4();
@@ -250,6 +341,7 @@ mod tests {
         assert_eq!(replay[0].sequence, 1);
         assert_eq!(replay[1].sequence, 2);
     }
+
     #[test]
     fn unacked_delivery_is_replayed_at_least_once() {
         let mut bus = EventBus::new();
@@ -262,6 +354,50 @@ mod tests {
         bus.ack("worker", first.sequence).unwrap();
         assert!(bus.poll("worker").unwrap().is_none());
     }
+
+    #[test]
+    fn duplicate_subscription_is_rejected_without_losing_cursor() {
+        let mut bus = EventBus::new();
+        bus.register_subscription(Subscription::all("worker"))
+            .unwrap();
+        assert_eq!(
+            bus.register_subscription(Subscription::all("worker")),
+            Err(EventRuntimeError::DuplicateSubscription("worker".into()))
+        );
+        assert_eq!(bus.subscription_count(), 1);
+    }
+
+    #[test]
+    fn filtered_subscription_only_receives_selected_event_types() {
+        let mut bus = EventBus::new();
+        bus.publish(event("A", Uuid::new_v4())).unwrap();
+        let selected = event("B", Uuid::new_v4());
+        let selected_id = selected.event_id;
+        bus.publish(selected).unwrap();
+        bus.register_subscription(
+            Subscription::for_types("worker", ["B".to_owned()]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(bus.poll("worker").unwrap().unwrap().event_id, selected_id);
+    }
+
+    #[test]
+    fn trace_and_correlation_queries_support_omnitrace_views() {
+        let mut bus = EventBus::new();
+        let trace_id = Uuid::new_v4();
+        let correlation_id = Uuid::new_v4();
+        let mut first = event("A", Uuid::new_v4());
+        first.trace_id = trace_id;
+        first.correlation_id = correlation_id;
+        let mut second = event("B", Uuid::new_v4());
+        second.trace_id = trace_id;
+        second.correlation_id = correlation_id;
+        bus.publish(first).unwrap();
+        bus.publish(second).unwrap();
+        assert_eq!(bus.trace(trace_id).len(), 2);
+        assert_eq!(bus.correlated(correlation_id).len(), 2);
+    }
+
     #[test]
     fn causation_cannot_reference_self() {
         let mut value = event("A", Uuid::new_v4());
