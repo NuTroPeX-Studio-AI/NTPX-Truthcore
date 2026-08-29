@@ -1,0 +1,13 @@
+[package]
+name = "ntpx-core-action"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ntpx-core-common = { path = "../core-common" }
+ntpx-core-object = { path = "../core-object" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
