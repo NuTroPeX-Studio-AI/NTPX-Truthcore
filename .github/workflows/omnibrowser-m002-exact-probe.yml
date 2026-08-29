@@ -26,6 +26,8 @@ jobs:
         run: cargo generate-lockfile
       - name: Locked metadata
         run: cargo metadata --locked --no-deps --format-version 1 > /tmp/m002-exact-metadata.json
+      - name: Canonical format
+        run: cargo fmt --all
       - name: Format check
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -38,15 +40,18 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: RustSec audit
         run: cargo audit --file Cargo.lock
-      - name: Persist exact workspace lockfile
+      - name: Persist canonical exact workspace source and lockfile
         working-directory: .
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add probes/omnibrowser-m001/Cargo.lock
+          git add probes/omnibrowser-m001/Cargo.lock \
+            probes/omnibrowser-m001/packages/runtime-control/src/lib.rs \
+            probes/omnibrowser-m001/packages/event-runtime/src/lib.rs \
+            probes/omnibrowser-m001/packages/module-kernel/src/lib.rs
           if git diff --cached --quiet; then
-            echo "Lockfile already canonical."
+            echo "Exact workspace source and lockfile already canonical."
           else
-            git commit -m "probe: persist exact M002 workspace lockfile [skip ci]"
+            git commit -m "probe: persist canonical exact M002 workspace [skip ci]"
             git push origin HEAD:omnibrowser/m002-exact-workspace-probe
           fi
