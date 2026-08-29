@@ -763,10 +763,9 @@ mod tests {
     fn module_wire_contract_is_frozen() {
         let value = serde_json::to_value(manifest("alpha", ControlState::On)).unwrap();
         assert_eq!(value["schema_version"], NTPX_MODULE_SCHEMA);
-        let schema: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../schemas/ntpx.module.v1.schema.json"
-        ))
-        .unwrap();
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../../../schemas/ntpx.module.v1.schema.json"))
+                .unwrap();
         assert_eq!(schema["$id"], NTPX_MODULE_SCHEMA);
     }
 

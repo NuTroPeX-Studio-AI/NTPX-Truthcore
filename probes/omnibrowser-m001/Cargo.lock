@@ -133,6 +133,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntpx-event-runtime"
+version = "0.1.0"
+dependencies = [
+ "ntpx-core-common",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "ntpx-module-kernel"
+version = "0.1.0"
+dependencies = [
+ "ntpx-core-common",
+ "ntpx-event-runtime",
+ "ntpx-runtime-control",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "ntpx-runtime-control"
+version = "0.1.0"
+dependencies = [
+ "ntpx-core-common",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

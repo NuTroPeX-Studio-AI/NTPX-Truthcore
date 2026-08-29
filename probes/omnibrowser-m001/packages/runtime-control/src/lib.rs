@@ -157,10 +157,16 @@ impl ToggleControl {
         reason: Option<String>,
         policy_source: Option<String>,
     ) -> Result<(), CoreValidationError> {
-        if effective_state != self.requested_state && reason.as_deref().unwrap_or("").trim().is_empty() {
+        if effective_state != self.requested_state
+            && reason.as_deref().unwrap_or("").trim().is_empty()
+        {
             return Err(CoreValidationError::InvalidState("toggle.reason"));
         }
-        let previous = (self.effective_state, self.reason.clone(), self.policy_source.clone());
+        let previous = (
+            self.effective_state,
+            self.reason.clone(),
+            self.policy_source.clone(),
+        );
         self.effective_state = effective_state;
         self.reason = reason;
         self.policy_source = policy_source;
@@ -218,8 +224,14 @@ mod tests {
 
     #[test]
     fn state_wire_values_are_stable() {
-        assert_eq!(serde_json::to_string(&ControlState::SandboxOnly).unwrap(), "\"SANDBOX_ONLY\"");
-        assert_eq!(serde_json::to_string(&ControlLock::LockedOn).unwrap(), "\"LOCKED_ON\"");
+        assert_eq!(
+            serde_json::to_string(&ControlState::SandboxOnly).unwrap(),
+            "\"SANDBOX_ONLY\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ControlLock::LockedOn).unwrap(),
+            "\"LOCKED_ON\""
+        );
     }
 
     #[test]
