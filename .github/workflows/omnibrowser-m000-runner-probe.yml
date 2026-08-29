@@ -1,0 +1,187 @@
+name: OmniBrowser M000 Runner Probe
+
+on:
+  push:
+    branches:
+      - omnibrowser/m000-runner-probe
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-linux:
+    name: Core toolchain + tests (Linux)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: probes/omnibrowser-m000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm 11.21.0
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.21.0
+          run_install: false
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Print toolchain
+        run: |
+          git --version
+          rustc --version
+          cargo --version
+          node --version
+          pnpm --version
+
+      - name: Validate pnpm install path
+        run: |
+          pnpm install --lockfile-only
+          pnpm install --frozen-lockfile
+
+      - name: Run Node TypeScript smoke test
+        run: pnpm test:node
+
+      - name: Generate Cargo lockfile
+        run: cargo generate-lockfile --manifest-path core/Cargo.toml
+
+      - name: Rust format check
+        run: cargo fmt --manifest-path core/Cargo.toml -- --check
+
+      - name: Rust clippy
+        run: cargo clippy --manifest-path core/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --manifest-path core/Cargo.toml --locked
+
+  security-linux:
+    name: Dependency security smoke scan (Linux)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: probes/omnibrowser-m000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm 11.21.0
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.21.0
+          run_install: false
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate dependency lockfiles
+        run: |
+          pnpm install --lockfile-only
+          cargo generate-lockfile --manifest-path core/Cargo.toml
+
+      - name: pnpm audit
+        run: pnpm audit --audit-level high
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: cargo audit
+        run: cargo audit --file core/Cargo.lock
+
+  reproducibility-linux:
+    name: Clean rebuild hash check (Linux)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: probes/omnibrowser-m000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate Cargo lockfile
+        run: cargo generate-lockfile --manifest-path core/Cargo.toml
+
+      - name: First release build
+        run: cargo build --manifest-path core/Cargo.toml --release --locked
+
+      - name: Record first hash
+        run: sha256sum core/target/release/ntpx-omnibrowser-env-check | cut -d ' ' -f1 > /tmp/ntpx-first.sha256
+
+      - name: Clean
+        run: cargo clean --manifest-path core/Cargo.toml
+
+      - name: Second release build
+        run: cargo build --manifest-path core/Cargo.toml --release --locked
+
+      - name: Compare clean-build hash
+        shell: bash
+        run: |
+          sha256sum core/target/release/ntpx-omnibrowser-env-check | cut -d ' ' -f1 > /tmp/ntpx-second.sha256
+          echo "first=$(cat /tmp/ntpx-first.sha256)"
+          echo "second=$(cat /tmp/ntpx-second.sha256)"
+          diff -u /tmp/ntpx-first.sha256 /tmp/ntpx-second.sha256
+
+  tauri-windows:
+    name: Tauri 2 compile + launch smoke (Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: probes/omnibrowser-m000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm 11.21.0
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.21.0
+          run_install: false
+
+      - name: Setup Rust stable MSVC
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Print Windows toolchain
+        shell: pwsh
+        run: |
+          git --version
+          rustc --version
+          cargo --version
+          node --version
+          pnpm --version
+
+      - name: Build minimal Tauri shell
+        run: cargo build --manifest-path tauri/Cargo.toml
+
+      - name: Launch Tauri process smoke test
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path 'tauri/target/debug/ntpx-omnibrowser-tauri-probe.exe'
+          $process = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 8
+          if ($process.HasExited) {
+            throw "Tauri probe exited unexpectedly with code $($process.ExitCode)"
+          }
+          Stop-Process -Id $process.Id -Force
+          Write-Host 'Tauri probe stayed alive for the smoke-test window.'
