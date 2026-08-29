@@ -214,10 +214,7 @@ impl EventBus {
         Ok(())
     }
 
-    pub fn poll(
-        &mut self,
-        subscription_id: &str,
-    ) -> Result<Option<NTPXEvent>, EventRuntimeError> {
+    pub fn poll(&mut self, subscription_id: &str) -> Result<Option<NTPXEvent>, EventRuntimeError> {
         let subscription = self
             .subscriptions
             .get_mut(subscription_id)
@@ -323,10 +320,9 @@ mod tests {
     fn event_wire_contract_is_frozen() {
         let value = serde_json::to_value(event("MODULE_STARTED", Uuid::new_v4())).unwrap();
         assert_eq!(value["schema_version"], NTPX_EVENT_SCHEMA);
-        let schema: Value = serde_json::from_str(include_str!(
-            "../../../schemas/ntpx.event.v1.schema.json"
-        ))
-        .unwrap();
+        let schema: Value =
+            serde_json::from_str(include_str!("../../../schemas/ntpx.event.v1.schema.json"))
+                .unwrap();
         assert_eq!(schema["$id"], NTPX_EVENT_SCHEMA);
     }
 
@@ -374,10 +370,8 @@ mod tests {
         let selected = event("B", Uuid::new_v4());
         let selected_id = selected.event_id;
         bus.publish(selected).unwrap();
-        bus.register_subscription(
-            Subscription::for_types("worker", ["B".to_owned()]).unwrap(),
-        )
-        .unwrap();
+        bus.register_subscription(Subscription::for_types("worker", ["B".to_owned()]).unwrap())
+            .unwrap();
         assert_eq!(bus.poll("worker").unwrap().unwrap().event_id, selected_id);
     }
 
