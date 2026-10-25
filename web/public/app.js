@@ -262,12 +262,12 @@ function verificationSettings() {
 
 function providerWithVerification() {
   if (!state.provider) return null;
-  const nliModel = elements.nliModel?.value.trim();
-  const embeddingModel = elements.embeddingModel?.value.trim();
+  // Always override from the current fields: an emptied field must switch the backend off,
+  // not fall back to whatever was configured at connect time.
   return {
     ...state.provider,
-    ...(nliModel ? { nliModel } : {}),
-    ...(embeddingModel ? { embeddingModel } : {}),
+    nliModel: elements.nliModel?.value.trim() || "",
+    embeddingModel: elements.embeddingModel?.value.trim() || "",
   };
 }
 

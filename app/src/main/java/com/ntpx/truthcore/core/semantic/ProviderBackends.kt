@@ -59,8 +59,12 @@ class ModelJudgeNliProvider(private val judge: ModelProvider) : NliProvider {
             val json = Regex("\\{[\\s\\S]*?\\}").find(text)?.value ?: return null
             return runCatching {
                 val root = JSONObject(json)
-                val entailment = root.getDouble("entailment")
-                val contradiction = root.getDouble("contradiction")
+                // Only real JSON numbers count; booleans, nulls, strings, and arrays are rejected.
+                val rawEntailment = root.get("entailment")
+                val rawContradiction = root.get("contradiction")
+                require(rawEntailment is Number && rawContradiction is Number)
+                val entailment = rawEntailment.toDouble()
+                val contradiction = rawContradiction.toDouble()
                 require(entailment.isFinite() && contradiction.isFinite())
                 entailment.coerceIn(0.0, 1.0) to contradiction.coerceIn(0.0, 1.0)
             }.getOrNull()

@@ -28,6 +28,8 @@ class ProviderBackendsTest {
         assertEquals(1.0 to 0.0, ModelJudgeNliProvider.parseScores("Sure: {\"entailment\": 1.7, \"contradiction\": -1, \"neutral\": 0}"))
         assertNull(ModelJudgeNliProvider.parseScores("entailment high"))
         assertNull(ModelJudgeNliProvider.parseScores("{\"entailment\": \"yes\"}"))
+        assertNull(ModelJudgeNliProvider.parseScores("{\"entailment\": true, \"contradiction\": null}"))
+        assertNull(ModelJudgeNliProvider.parseScores("{\"entailment\": \"0.9\", \"contradiction\": \"0\"}"))
     }
 
     @Test fun judgeNliProviderFailsClosedOnGarbage() {

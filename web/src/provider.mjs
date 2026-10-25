@@ -143,8 +143,10 @@ export function parseNliScores(text) {
   if (!match) return null;
   let parsed;
   try { parsed = JSON.parse(match[0]); } catch { return null; }
-  const entailment = Number(parsed?.entailment);
-  const contradiction = Number(parsed?.contradiction);
+  // Only real JSON numbers count; booleans, nulls, strings, and arrays must not coerce into a verdict.
+  const entailment = parsed?.entailment;
+  const contradiction = parsed?.contradiction;
+  if (typeof entailment !== "number" || typeof contradiction !== "number") return null;
   if (!Number.isFinite(entailment) || !Number.isFinite(contradiction)) return null;
   const clamp = (value) => Math.max(0, Math.min(1, value));
   return { entailment: clamp(entailment), contradiction: clamp(contradiction) };

@@ -291,3 +291,12 @@ test("NLI judge withholds overlong claims instead of judging a truncated prefix"
   assert.equal(result.claims.length, 1);
   assert.equal(result.released, 0);
 });
+
+test("NLI verdicts must carry real numbers", () => {
+  for (const text of [
+    "{\"entailment\": true, \"contradiction\": null}",
+    "{\"entailment\": \"0.9\", \"contradiction\": \"0\"}",
+    "{\"entailment\": [1], \"contradiction\": [0]}",
+  ]) assert.equal(parseNliScores(text), null, text);
+  assert.deepEqual(parseNliScores("{\"entailment\": 0.9, \"contradiction\": 0}"), { entailment: 0.9, contradiction: 0 });
+});
