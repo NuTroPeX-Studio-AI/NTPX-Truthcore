@@ -42,6 +42,8 @@ object ClaimLock {
         "\\b(no|not|never|none|cannot|can't|won't|without|isn't|aren't|wasn't|weren't|doesn't|don't|didn't|hasn't|haven't|neither|nor)\\b",
         RegexOption.IGNORE_CASE,
     )
+    /** Whitespace followed by an uppercase letter: an abbreviation before it may end a sentence. */
+    private val sentenceStart = Regex("^\\s+\\p{Lu}")
     private val citationOnly = Regex("^(\\[S\\d+]\\s*[,;]?\\s*)+[.!?]?$")
     private val stop = setOf("the", "a", "an", "and", "or", "is", "are", "was", "were", "to", "of", "in", "on", "at", "for", "with", "from", "that", "this", "it", "be", "as", "by")
     private val abbreviations = listOf("e.g.", "i.e.", "etc.", "vs.", "mr.", "mrs.", "ms.", "dr.", "prof.", "inc.", "ltd.", "co.", "no.", "fig.", "approx.", "st.", "jr.", "sr.", "u.s.", "u.k.")
@@ -189,9 +191,17 @@ object ClaimLock {
         var working = text.trim()
         val placeholders = mutableListOf<String>()
         abbreviations.forEach { abbr ->
-            working = Regex("\\b" + Regex.escape(abbr), RegexOption.IGNORE_CASE).replace(working) { match ->
-                placeholders += match.value
-                "\u0000${placeholders.size - 1}\u0000"
+            // Only mask mid-sentence uses; before whitespace + uppercase (or end of text) the
+            // abbreviation may end a sentence, so the boundary is kept and each sentence is checked alone.
+            val source = working
+            working = Regex("\\b" + Regex.escape(abbr), RegexOption.IGNORE_CASE).replace(source) { match ->
+                val rest = source.substring(match.range.last + 1)
+                if (rest.isBlank() || sentenceStart.containsMatchIn(rest)) {
+                    match.value
+                } else {
+                    placeholders += match.value
+                    "\u0000${placeholders.size - 1}\u0000"
+                }
             }
         }
         val restore = Regex("\u0000(\\d+)\u0000")

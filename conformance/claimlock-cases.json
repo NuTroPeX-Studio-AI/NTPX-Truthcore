@@ -250,6 +250,20 @@
       "expect": [
         "SUPPORTED"
       ]
+    },
+    {
+      "name": "sentence-ending abbreviation keeps the boundary",
+      "evidence": [
+        {
+          "content": "Alice works as senior engineer at Acme Inc.",
+          "trust": 1.0
+        }
+      ],
+      "draft": "Alice works as senior engineer at Acme Inc. Unicorns exist [S1].",
+      "expect": [
+        "UNSUPPORTED",
+        "UNSUPPORTED"
+      ]
     }
   ]
 }

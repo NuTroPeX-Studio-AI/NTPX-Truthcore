@@ -149,8 +149,12 @@ export function statements(text) {
   let working = String(text ?? "").trim();
   const placeholders = [];
   for (const abbr of abbreviations) {
+    // Only mask mid-sentence uses. Followed by whitespace + uppercase (or end of text) the
+    // abbreviation may end a sentence, so the boundary is kept and each sentence is checked alone.
     const pattern = new RegExp(`\\b${abbr.replace(/\./g, "\\.")}`, "gi");
-    working = working.replace(pattern, (match) => {
+    working = working.replace(pattern, (match, offset, whole) => {
+      const rest = whole.slice(offset + match.length);
+      if (/^\s*$/.test(rest) || /^\s+\p{Lu}/u.test(rest)) return match;
       placeholders.push(match);
       return `\u0000${placeholders.length - 1}\u0000`;
     });
