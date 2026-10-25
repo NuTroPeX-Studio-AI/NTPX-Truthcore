@@ -98,15 +98,16 @@ object ClaimLock {
                 return@forEachIndexed
             }
             val wholeOverlap = overlap(claimTokens, sanitized.text)
-            val best = bestSentence(claimTokens, sanitized.text)
+            val best = bestSentences(claimTokens, sanitized.text)
             val sourceNums = numbers(sanitized.text)
 
             if (claimNums.isNotEmpty() && !sourceNums.containsAll(claimNums)) {
-                if (best.second >= CONTRADICTION_OVERLAP && numbers(best.first).isNotEmpty()) contradicted = true
+                if (best.second >= CONTRADICTION_OVERLAP && best.first.any { numbers(it).isNotEmpty() }) contradicted = true
                 reason = "Claim introduces or conflicts with a quantity absent from evidence"
                 return@forEachIndexed
             }
-            if (best.second >= CONTRADICTION_OVERLAP && claimNegative != negativeRegex.containsMatchIn(best.first)) {
+            // Every sentence tied for the best match is checked, so sentence order cannot hide a contradiction.
+            if (best.second >= CONTRADICTION_OVERLAP && best.first.any { claimNegative != negativeRegex.containsMatchIn(it) }) {
                 contradicted = true
                 reason = "Claim polarity conflicts with evidence"
                 return@forEachIndexed
@@ -210,13 +211,19 @@ object ClaimLock {
         return merged
     }
 
-    private fun bestSentence(claimTokens: Set<String>, source: String): Pair<String, Double> {
-        var best = source to 0.0
+    private fun bestSentences(claimTokens: Set<String>, source: String): Pair<List<String>, Double> {
+        var texts = mutableListOf(source)
+        var bestScore = 0.0
         statements(source).forEach { sentence ->
             val score = overlap(claimTokens, sentence)
-            if (score > best.second) best = sentence to score
+            if (score > bestScore) {
+                bestScore = score
+                texts = mutableListOf(sentence)
+            } else if (score == bestScore && score > 0.0) {
+                texts += sentence
+            }
         }
-        return best
+        return texts to bestScore
     }
 
     private val thousands = Regex("(?<=\\d),(?=\\d{3}\\b)")

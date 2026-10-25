@@ -61,8 +61,8 @@ class TruthCoreViewModel(application: Application) : AndroidViewModel(applicatio
     var speakReplies by mutableStateOf(true)
 
     // Model
-    var baseUrl by mutableStateOf("")
-    var modelName by mutableStateOf("")
+    var baseUrl by mutableStateOf(ModelSession.connection?.baseUrl.orEmpty())
+    var modelName by mutableStateOf(ModelSession.connection?.model.orEmpty())
     var apiKey by mutableStateOf("")
     var modelConnected by mutableStateOf(ModelSession.provider != null)
         private set
@@ -71,9 +71,9 @@ class TruthCoreViewModel(application: Application) : AndroidViewModel(applicatio
 
     // Verification
     var nliEnabled by mutableStateOf(VerificationSession.semanticGate != null)
-    var nliModel by mutableStateOf("")
+    var nliModel by mutableStateOf(VerificationSession.nliModel)
     var requireSemantic by mutableStateOf(VerificationSession.requireSemantic)
-    var embeddingModel by mutableStateOf("")
+    var embeddingModel by mutableStateOf(VerificationSession.embeddingModel)
     var verificationStatus by mutableStateOf(describeVerification())
         private set
 
@@ -128,16 +128,18 @@ class TruthCoreViewModel(application: Application) : AndroidViewModel(applicatio
                 busy = false
                 if (test.success) {
                     ModelSession.provider = candidate
-                    connectedBaseUrl = baseUrl.trim()
-                    connectedModel = modelName.trim()
-                    connectedKey = apiKey
+                    ModelSession.connection = ModelConfig(baseUrl.trim(), modelName.trim(), apiKey)
                     apiKey = ""
                     modelConnected = true
                     providerStatus = "Model connected: ${modelName.trim()}"
                     applyVerification()
                 } else {
-                    ModelSession.provider = null
+                    // A failed reconnect must not leave old verification backends talking to the previous endpoint.
+                    ModelSession.clear()
                     modelConnected = false
+                    nliEnabled = false
+                    requireSemantic = false
+                    verificationStatus = describeVerification()
                     providerStatus = test.error ?: "Model connection test failed"
                 }
             }
@@ -145,11 +147,9 @@ class TruthCoreViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun disconnectModel() {
-        ModelSession.provider = null
-        VerificationSession.clear()
+        ModelSession.clear()
         modelConnected = false
         apiKey = ""
-        connectedKey = ""
         nliEnabled = false
         requireSemantic = false
         providerStatus = "Model disconnected"
@@ -161,7 +161,8 @@ class TruthCoreViewModel(application: Application) : AndroidViewModel(applicatio
      * Both reuse the connected endpoint/key; the NLI judge may use a different model.
      */
     fun applyVerification() {
-        if (!modelConnected || connectedBaseUrl.isBlank()) {
+        val connection = ModelSession.connection
+        if (!modelConnected || connection == null) {
             VerificationSession.clear()
             if (nliEnabled || embeddingModel.isNotBlank()) {
                 verificationStatus = "Connect a model first; verification backends reuse its endpoint."
@@ -171,22 +172,18 @@ class TruthCoreViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         VerificationSession.semanticGate = if (nliEnabled) {
-            val judgeModel = nliModel.trim().ifBlank { connectedModel }
-            val judge = OpenAICompatibleProvider(ModelConfig(connectedBaseUrl, judgeModel, connectedKey))
+            val judgeModel = nliModel.trim().ifBlank { connection.model }
+            val judge = OpenAICompatibleProvider(connection.copy(model = judgeModel))
             DeepVerificationGate(SemanticVerifier(ModelJudgeNliProvider(judge)))
         } else null
         VerificationSession.requireSemantic = nliEnabled && requireSemantic
         VerificationSession.embeddings = embeddingModel.trim().takeIf { it.isNotBlank() }?.let {
-            OpenAICompatibleEmbeddingProvider(OpenAICompatibleProvider(ModelConfig(connectedBaseUrl, connectedModel, connectedKey)), it)
+            OpenAICompatibleEmbeddingProvider(OpenAICompatibleProvider(connection), it)
         }
+        VerificationSession.nliModel = if (nliEnabled) nliModel.trim() else ""
+        VerificationSession.embeddingModel = embeddingModel.trim()
         verificationStatus = describeVerification()
     }
-
-    // Process-memory copy of the connected endpoint/key for verification backends.
-    // The visible key field is cleared after a successful connection.
-    private var connectedBaseUrl: String = ""
-    private var connectedModel: String = ""
-    private var connectedKey: String = ""
 
     fun connectMcp() {
         val candidate = McpClient(McpConfig(endpoint = mcpEndpoint, bearerToken = mcpToken))

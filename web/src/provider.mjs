@@ -90,6 +90,9 @@ export function createEmbeddingProvider(config, options = {}) {
   };
 }
 
+export const NLI_MAX_HYPOTHESIS = 2000;
+export const NLI_MAX_PREMISE = 8000;
+
 const NLI_SYSTEM_PROMPT = [
   "You are a natural-language-inference judge inside NTPX TruthCore.",
   "You receive a PREMISE (evidence) and a HYPOTHESIS (claim).",
@@ -116,9 +119,16 @@ export function createNliProvider(config, options = {}) {
   };
   const chat = createProvider(judgeConfig, options);
   return async (claim, evidence) => {
+    const hypothesis = String(claim);
+    const premise = String(evidence);
+    // Never certify a truncated input: an overlong claim or premise gets a completed
+    // zero-entailment verdict, which withholds the claim rather than passing a prefix.
+    if (hypothesis.length > NLI_MAX_HYPOTHESIS || premise.length > NLI_MAX_PREMISE) {
+      return { available: true, entailment: 0, contradiction: 0, provider: "nli-judge", reason: "Claim or evidence exceeds the semantic judge's input limit" };
+    }
     const result = await chat({
       systemPrompt: NLI_SYSTEM_PROMPT,
-      userPrompt: `PREMISE:\n${String(evidence).slice(0, 8000)}\n\nHYPOTHESIS:\n${String(claim).slice(0, 2000)}`,
+      userPrompt: `PREMISE:\n${premise}\n\nHYPOTHESIS:\n${hypothesis}`,
       temperature: 0,
     });
     if (!result.success) return { available: false, entailment: 0, contradiction: 0, provider: "nli-judge", reason: result.error };

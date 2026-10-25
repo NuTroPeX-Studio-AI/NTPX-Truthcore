@@ -273,3 +273,21 @@ test("guarded transport enforces an absolute deadline against trickling response
     https.default.request = realRequest;
   }
 });
+
+test("NLI judge withholds overlong claims instead of judging a truncated prefix", async () => {
+  const { createNliProvider: make, NLI_MAX_HYPOTHESIS } = await import("../src/provider.mjs");
+  let called = false;
+  const fetchImpl = async () => { called = true; return { status: 200, ok: true, text: async () => JSON.stringify({ choices: [{ message: { content: "{\"entailment\":1,\"contradiction\":0}" } }] }) }; };
+  const nli = make({ baseUrl: "https://api.example.com/v1", model: "m" }, { ...allow, fetchImpl });
+  // One statement (no sentence breaks) whose unsupported tail sits past the judge limit.
+  const long = `${"Alice sold the car to Bob, and ".repeat(80)}Bob sold the car to Alice`;
+  assert.ok(long.length > NLI_MAX_HYPOTHESIS);
+  const verdict = await nli(long, "Alice sold the car to Bob.");
+  assert.equal(verdict.available, true);
+  assert.equal(verdict.entailment, 0);
+  assert.equal(called, false);
+  const evidence = [{ id: "s", content: "Alice sold the car to Bob.", trust: 1 }];
+  const result = await verifyClaimsDeep(`${long} [S1].`, evidence, { nli });
+  assert.equal(result.claims.length, 1);
+  assert.equal(result.released, 0);
+});

@@ -106,16 +106,17 @@ function assessStatement(statement, indexed, minSupport) {
     }
 
     const wholeOverlap = overlap(claimTokens, sanitized.text);
-    const best = bestSentence(claimTokens, sanitized.text);
+    const best = bestSentences(claimTokens, sanitized.text);
     const sourceNums = numbersIn(sanitized.text);
 
     if (claimNums.size && !containsAll(sourceNums, claimNums)) {
-      const bestNums = numbersIn(best.text);
-      if (best.score >= CONTRADICTION_OVERLAP && bestNums.size) contradicted = true;
+      if (best.score >= CONTRADICTION_OVERLAP && best.texts.some((text) => numbersIn(text).size)) contradicted = true;
       reason = "Claim introduces or conflicts with a quantity absent from evidence";
       continue;
     }
-    if (best.score >= CONTRADICTION_OVERLAP && claimNegative !== negativeRegex.test(best.text)) {
+    // Every sentence tied for the best match is checked, so the order of sentences
+    // in the source cannot hide an explicit contradiction.
+    if (best.score >= CONTRADICTION_OVERLAP && best.texts.some((text) => claimNegative !== negativeRegex.test(text))) {
       contradicted = true;
       reason = "Claim polarity conflicts with evidence";
       continue;
@@ -172,11 +173,12 @@ export function statements(text) {
   return merged;
 }
 
-function bestSentence(claimTokens, source) {
-  let best = { text: source, score: 0 };
+function bestSentences(claimTokens, source) {
+  let best = { texts: [source], score: 0 };
   for (const sentence of statements(source)) {
     const score = overlap(claimTokens, sentence);
-    if (score > best.score) best = { text: sentence, score };
+    if (score > best.score) best = { texts: [sentence], score };
+    else if (score === best.score && score > 0) best.texts.push(sentence);
   }
   return best;
 }

@@ -15,10 +15,15 @@ import org.json.JSONObject
  */
 class ModelJudgeNliProvider(private val judge: ModelProvider) : NliProvider {
     override fun score(claim: String, evidence: String): SemanticScore {
+        // Never certify a truncated input: an overlong claim or premise gets a completed
+        // zero-entailment verdict, which withholds the claim instead of judging a prefix.
+        if (claim.length > MAX_HYPOTHESIS || evidence.length > MAX_PREMISE) {
+            return SemanticScore(true, 0.0, 0.0, "nli-judge", "Claim or evidence exceeds the semantic judge's input limit")
+        }
         val response = judge.generate(
             ModelRequest(
                 systemPrompt = SYSTEM_PROMPT,
-                userPrompt = "PREMISE:\n${evidence.take(8000)}\n\nHYPOTHESIS:\n${claim.take(2000)}",
+                userPrompt = "PREMISE:\n$evidence\n\nHYPOTHESIS:\n$claim",
                 temperature = 0.0,
             )
         )
@@ -37,6 +42,9 @@ class ModelJudgeNliProvider(private val judge: ModelProvider) : NliProvider {
     }
 
     companion object {
+        const val MAX_HYPOTHESIS = 2000
+        const val MAX_PREMISE = 8000
+
         val SYSTEM_PROMPT = listOf(
             "You are a natural-language-inference judge inside NTPX TruthCore.",
             "You receive a PREMISE (evidence) and a HYPOTHESIS (claim).",

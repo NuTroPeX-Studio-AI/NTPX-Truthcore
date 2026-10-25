@@ -35,6 +35,19 @@ class ProviderBackendsTest {
         assertFalse(score.available)
     }
 
+    @Test fun judgeNliProviderWithholdsOverlongInputsWithoutCallingModel() {
+        var calls = 0
+        val judge = object : ModelProvider {
+            override val displayName = "fixture"
+            override fun generate(request: ModelRequest): ModelResponse { calls += 1; return ModelResponse(true, text = "{\"entailment\":1,\"contradiction\":0}") }
+        }
+        val long = "Alice sold the car to Bob. ".repeat(80) + "Bob sold the car to Alice."
+        val score = ModelJudgeNliProvider(judge).score(long, "Alice sold the car to Bob.")
+        assertTrue(score.available)
+        assertEquals(0.0, score.entailment, 0.0)
+        assertEquals(0, calls)
+    }
+
     @Test fun judgeNliProviderReturnsScores() {
         val score = ModelJudgeNliProvider(provider("{\"entailment\":0.91,\"contradiction\":0.02}")).score("claim", "evidence")
         assertTrue(score.available)

@@ -10,6 +10,19 @@ import com.ntpx.truthcore.core.semantic.EmbeddingProvider
 object ModelSession {
     @Volatile
     var provider: ModelProvider? = null
+
+    /**
+     * Endpoint/model/key of the connected provider, kept with it so verification
+     * backends can be rebuilt after the activity is recreated. Process memory only.
+     */
+    @Volatile
+    var connection: ModelConfig? = null
+
+    fun clear() {
+        provider = null
+        connection = null
+        VerificationSession.clear()
+    }
 }
 
 /**
@@ -29,9 +42,18 @@ object VerificationSession {
     @Volatile
     var embeddings: EmbeddingProvider? = null
 
+    /** Model names behind the backends above, so a recreated UI shows and re-applies the same settings. */
+    @Volatile
+    var nliModel: String = ""
+
+    @Volatile
+    var embeddingModel: String = ""
+
     fun clear() {
         semanticGate = null
         requireSemantic = false
         embeddings = null
+        nliModel = ""
+        embeddingModel = ""
     }
 }
