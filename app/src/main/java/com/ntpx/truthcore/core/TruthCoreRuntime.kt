@@ -7,15 +7,32 @@ import com.ntpx.truthcore.core.agent.ToolCall
 import com.ntpx.truthcore.core.agent.ToolRuntime
 import com.ntpx.truthcore.core.chat.ConversationEngine
 import com.ntpx.truthcore.core.chat.ConversationReply
+import com.ntpx.truthcore.core.chat.VerificationOptions
+import com.ntpx.truthcore.core.data.TruthCoreRepository
 import com.ntpx.truthcore.core.data.TruthCoreStore
+import com.ntpx.truthcore.core.evidence.EvidenceSanitizer
 import com.ntpx.truthcore.core.mcp.McpSession
 import com.ntpx.truthcore.core.model.ModelProvider
+import com.ntpx.truthcore.core.model.VerificationSession
 import com.ntpx.truthcore.core.rag.EvidenceRetriever
 
-class TruthCoreRuntime(context: Context) {
-    private val store = TruthCoreStore(context.applicationContext)
+/**
+ * Process-wide TruthCore runtime. The activity and the hands-free service share
+ * one instance (via [get]) so they see the same database connection, the same
+ * pending approvals, and one unforked audit chain.
+ */
+class TruthCoreRuntime internal constructor(private val store: TruthCoreRepository) {
     private val retriever = EvidenceRetriever(store)
-    private val conversation = ConversationEngine { query -> retriever.retrieve(query) }
+    private val conversation = ConversationEngine(
+        evidenceResolver = { query -> retriever.retrieve(query) },
+        verification = {
+            VerificationOptions(
+                semanticGate = VerificationSession.semanticGate,
+                requireSemantic = VerificationSession.requireSemantic,
+                embeddings = VerificationSession.embeddings,
+            )
+        },
+    )
     private val tools = ToolRuntime(store)
     private val executive = AgentExecutive(tools)
     private val workforce = MultiAgentWorkforce()
@@ -27,6 +44,33 @@ class TruthCoreRuntime(context: Context) {
         if (lower.startsWith("approve ")) {
             val result = executive.run(request, provider)
             return ConversationReply(result.text, result.status == "ACTION_EXECUTED", result.status)
+        }
+
+        if (lower in setOf("deny", "deny all", "cancel", "cancel approvals", "reject")) {
+            val count = tools.cancelPending()
+            store.appendAudit("approval.cancelled", count.toString())
+            return ConversationReply(
+                if (count == 0) "There are no pending approvals." else "Cancelled $count pending approval${if (count == 1) "" else "s"}.",
+                verified = true,
+                status = "ACTION_DENIED",
+            )
+        }
+
+        if (lower.startsWith("remove knowledge ") || lower.startsWith("forget knowledge ")) {
+            val query = request.substringAfter("knowledge ").removePrefix("about ").trim()
+            val result = tools.execute(ToolCall("knowledge.forget", mapOf("query" to query)))
+            return ConversationReply(result.output, verified = false, status = if (result.approvalRequired) "APPROVAL_REQUIRED" else "ACTION_FAILED")
+        }
+
+        if (lower.startsWith("forget ")) {
+            val query = request.substringAfter(' ').removePrefix("about ").removePrefix("that ").trim()
+            val result = tools.execute(ToolCall("memory.forget", mapOf("query" to query)))
+            return ConversationReply(result.output, verified = false, status = if (result.approvalRequired) "APPROVAL_REQUIRED" else "ACTION_FAILED")
+        }
+
+        if (lower == "memory count" || lower == "how many memories") {
+            val count = store.memoryCount()
+            return ConversationReply("$count saved memor${if (count == 1) "y" else "ies"} on this device.", verified = true, status = "LOCAL")
         }
 
         if (lower.startsWith("remember that ")) {
@@ -82,8 +126,11 @@ class TruthCoreRuntime(context: Context) {
             val result = client.listTools()
             return result.fold(
                 onSuccess = { items ->
+                    val listing = items.joinToString("\n") { "- ${it.name}: ${it.description.take(200)}" }
+                    val sanitized = EvidenceSanitizer.sanitize(listing)
                     ConversationReply(
-                        items.joinToString("\n") { "- ${it.name}: ${it.description}" }.ifBlank { "The MCP server returned no tools." },
+                        (if (sanitized.quarantined) "[MCP tool listing quarantined: ${sanitized.flags.joinToString()}]" else sanitized.text)
+                            .ifBlank { "The MCP server returned no tools." },
                         verified = false,
                         status = "EXTERNAL_DATA",
                     )
@@ -129,5 +176,16 @@ class TruthCoreRuntime(context: Context) {
         return conversation.respond(request, provider)
     }
 
+    /** Closes the backing store. Only used for non-shared (test) runtimes; the shared instance lives with the process. */
     fun close() = store.close()
+
+    companion object {
+        @Volatile
+        private var shared: TruthCoreRuntime? = null
+
+        fun get(context: Context): TruthCoreRuntime =
+            shared ?: synchronized(this) {
+                shared ?: TruthCoreRuntime(TruthCoreStore(context.applicationContext)).also { shared = it }
+            }
+    }
 }

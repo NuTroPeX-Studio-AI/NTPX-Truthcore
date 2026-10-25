@@ -1,9 +1,9 @@
 package com.ntpx.truthcore.core.rag
 
-import com.ntpx.truthcore.core.data.TruthCoreStore
+import com.ntpx.truthcore.core.data.TruthCoreRepository
 import com.ntpx.truthcore.core.evidence.Evidence
 
-class EvidenceRetriever(private val store: TruthCoreStore) {
+class EvidenceRetriever(private val store: TruthCoreRepository) {
     fun retrieve(query: String, base: List<Evidence> = emptyList(), limit: Int = 16): List<Evidence> {
         val knowledge = store.searchKnowledge(query, limit)
         val memories = store.searchMemory(query, limit = 8).map {
