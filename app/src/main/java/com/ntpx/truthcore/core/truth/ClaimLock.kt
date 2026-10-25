@@ -10,6 +10,8 @@ data class ClaimAssessment(
     val sourceIds: List<String> = emptyList(),
     val reason: String,
     val method: String? = null,
+    /** Cited sources that individually passed the deterministic gate (the only ones the semantic gate judges). */
+    val supportingIds: List<String> = emptyList(),
 ) {
     enum class Status { SUPPORTED, UNSUPPORTED, CONTRADICTED, PROPOSAL, UNKNOWN }
 }
@@ -86,13 +88,14 @@ object ClaimLock {
         var contradicted = false
         var strongest = 0.0
         var reason = "Insufficient support"
+        val supportingIds = mutableListOf<String>()
 
-        for (source in sources) {
+        sources.forEachIndexed { position, source ->
             val sanitized = EvidenceSanitizer.sanitize(source.content)
             val effective = if (sanitized.quarantined) 0.0 else source.effectiveStrength()
             if (effective <= 0.0 || sanitized.text.isBlank()) {
                 reason = "Source expired, quarantined, or untrusted"
-                continue
+                return@forEachIndexed
             }
             val wholeOverlap = overlap(claimTokens, sanitized.text)
             val best = bestSentence(claimTokens, sanitized.text)
@@ -101,14 +104,16 @@ object ClaimLock {
             if (claimNums.isNotEmpty() && !sourceNums.containsAll(claimNums)) {
                 if (best.second >= CONTRADICTION_OVERLAP && numbers(best.first).isNotEmpty()) contradicted = true
                 reason = "Claim introduces or conflicts with a quantity absent from evidence"
-                continue
+                return@forEachIndexed
             }
             if (best.second >= CONTRADICTION_OVERLAP && claimNegative != negativeRegex.containsMatchIn(best.first)) {
                 contradicted = true
                 reason = "Claim polarity conflicts with evidence"
-                continue
+                return@forEachIndexed
             }
-            strongest = maxOf(strongest, wholeOverlap * effective)
+            val support = wholeOverlap * effective
+            if (support >= minSupport) supportingIds += sourceIds[position]
+            strongest = maxOf(strongest, support)
         }
 
         return when {
@@ -116,6 +121,7 @@ object ClaimLock {
             strongest >= minSupport -> ClaimAssessment(
                 statement, ClaimAssessment.Status.SUPPORTED, sourceIds,
                 "Bound evidence passed deterministic truth checks", method = "deterministic",
+                supportingIds = supportingIds,
             )
             else -> ClaimAssessment(statement, ClaimAssessment.Status.UNSUPPORTED, sourceIds, reason)
         }
@@ -131,9 +137,13 @@ object ClaimLock {
             return assessment.copy(status = ClaimAssessment.Status.UNSUPPORTED, reason = "Semantic verification required but no gate is configured")
         }
         val claim = assessment.text.replace(citationRegex, "").trim()
-        val sources = assessment.sourceIds.mapNotNull { indexed[it.removePrefix("S").toInt()] }
+        // Only individually supporting sources are judged, so an unrelated co-citation can
+        // neither unlock nor stand in for a completed semantic verdict.
+        val sources = assessment.supportingIds.ifEmpty { assessment.sourceIds }
+            .mapNotNull { indexed[it.removePrefix("S").toInt()] }
         var passed = false
         var contradicted = false
+        var completed = 0
         var unavailable: String? = null
         var lastReason = "Semantic entailment is below release threshold"
         for (source in sources) {
@@ -142,6 +152,7 @@ object ClaimLock {
                 unavailable = deep.reason
                 continue
             }
+            completed += 1
             lastReason = deep.reason
             if (deep.reason.contains("contradiction", ignoreCase = true)) contradicted = true
             if (deep.releasable) passed = true
@@ -152,8 +163,9 @@ object ClaimLock {
                 reason = "Semantic verifier detected contradiction with cited evidence",
             )
             passed -> assessment.copy(reason = "Bound evidence passed semantic + deterministic truth checks", method = "semantic+deterministic")
-            unavailable != null && !requireSemantic -> assessment.copy(reason = "${assessment.reason} (semantic gate unavailable: $unavailable)")
-            unavailable != null -> assessment.copy(status = ClaimAssessment.Status.UNSUPPORTED, reason = unavailable)
+            completed == 0 && unavailable != null && !requireSemantic ->
+                assessment.copy(reason = "${assessment.reason} (semantic gate unavailable: $unavailable)")
+            completed == 0 && unavailable != null -> assessment.copy(status = ClaimAssessment.Status.UNSUPPORTED, reason = unavailable)
             else -> assessment.copy(status = ClaimAssessment.Status.UNSUPPORTED, reason = lastReason)
         }
     }

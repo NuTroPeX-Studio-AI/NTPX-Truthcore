@@ -45,6 +45,16 @@ class RepositoryAndToolsTest {
         assertEquals(1, repo.memoryCount())
     }
 
+    @Test fun forgetKeepsShortWordsAndMatchesWholeWords() {
+        val repo = InMemoryTruthCoreRepository()
+        repo.remember("Notes on Project X launch")
+        repo.remember("Notes on Project Y launch")
+        repo.remember("Project Xenon roadmap")
+        assertEquals(1, repo.forgetMemory("project X"))
+        assertEquals(2, repo.memoryCount())
+        assertTrue(repo.searchMemory("project").none { it.content.contains("Project X ") })
+    }
+
     @Test fun writeToolsRequireApprovalAndExecuteOnce() {
         val repo = InMemoryTruthCoreRepository()
         val tools = ToolRuntime(repo)

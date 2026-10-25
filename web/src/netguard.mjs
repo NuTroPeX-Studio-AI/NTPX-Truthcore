@@ -138,9 +138,11 @@ export function guardedPost(url, { headers = {}, body = "", timeoutMs = 30000, m
     }
     const payload = Buffer.from(String(body), "utf8");
     let settled = false;
+    let deadline = null;
     const fail = (error) => {
       if (settled) return;
       settled = true;
+      clearTimeout(deadline);
       reject(error);
     };
     const request = https.request({
@@ -167,6 +169,7 @@ export function guardedPost(url, { headers = {}, body = "", timeoutMs = 30000, m
       response.on("end", () => {
         if (settled) return;
         settled = true;
+        clearTimeout(deadline);
         const text = Buffer.concat(chunks).toString("utf8");
         resolve({
           status: response.statusCode || 0,
@@ -177,7 +180,11 @@ export function guardedPost(url, { headers = {}, body = "", timeoutMs = 30000, m
       response.on("error", fail);
     });
     request.on("error", fail);
-    request.on("timeout", () => request.destroy(Object.assign(new Error("Request timed out"), { name: "AbortError" })));
+    // `timeout` only measures socket inactivity; the deadline bounds total duration so a
+    // provider trickling bytes cannot hold the request (and the inbound client) open forever.
+    const timedOut = () => request.destroy(Object.assign(new Error("Request timed out"), { name: "AbortError" }));
+    request.on("timeout", timedOut);
+    deadline = setTimeout(timedOut, timeoutMs);
     request.end(payload);
   });
 }

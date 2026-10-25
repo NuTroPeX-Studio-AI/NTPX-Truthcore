@@ -95,4 +95,25 @@ class ClaimLockHardeningTest {
         val claim = ClaimLock.verify("Paris is the capital of France [S1].", listOf(paris), semanticGate = strong).claims.single()
         assertEquals("semantic+deterministic", claim.method)
     }
+
+    @Test fun unrelatedCoCitationCannotOverrideCompletedSemanticRejection() {
+        val evidence = listOf(
+            Evidence("s1", "deal", "Alice sold the car to Bob.", trust = 1.0),
+            Evidence("s2", "weather", "The weather was mild in spring.", trust = 1.0),
+        )
+        val gate = DeepVerificationGate(SemanticVerifier(NliProvider { _, premise ->
+            if (premise.contains("Alice")) SemanticScore(true, entailment = 0.05, contradiction = 0.1, provider = "fixture", reason = "test")
+            else SemanticScore(false, provider = "fixture", reason = "offline")
+        }))
+        assertEquals(0, ClaimLock.verify("Bob sold the car to Alice [S1].", evidence, semanticGate = gate).released)
+        assertEquals(0, ClaimLock.verify("Bob sold the car to Alice [S1][S2].", evidence, semanticGate = gate).released)
+    }
+
+    @Test fun supportingSourcesAreRecordedPerClaim() {
+        val evidence = listOf(
+            Evidence("s1", "a", "Unrelated text about cooking pasta.", trust = 1.0),
+            Evidence("s2", "b", "The project codename is Orion.", trust = 1.0),
+        )
+        assertEquals(listOf("S2"), ClaimLock.verify("The project codename is Orion [S1][S2].", evidence).claims.single().supportingIds)
+    }
 }

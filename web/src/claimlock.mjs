@@ -42,9 +42,12 @@ export async function verifyClaimsDeep(draft, evidence, { nli = null, minSupport
       continue;
     }
     const claim = assessment.text.replace(citationRegex, "").trim();
-    const sources = assessment.sourceIds.map((id) => indexed.get(Number(id.slice(1)))).filter(Boolean);
+    // Only sources that individually passed the deterministic gate are judged, so an
+    // unrelated co-citation can neither unlock nor stand in for a semantic verdict.
+    const sources = (assessment.supportingIds ?? assessment.sourceIds).map((id) => indexed.get(Number(id.slice(1)))).filter(Boolean);
     let passed = false;
     let contradicted = false;
+    let completed = 0;
     let unavailableReason = null;
     for (const source of sources) {
       const deep = await deepVerifyClaim(claim, source, nli, thresholds);
@@ -52,6 +55,7 @@ export async function verifyClaimsDeep(draft, evidence, { nli = null, minSupport
         unavailableReason = deep.reason;
         continue;
       }
+      completed += 1;
       if (/contradiction/i.test(deep.reason)) contradicted = true;
       if (deep.releasable) passed = true;
     }
@@ -59,10 +63,10 @@ export async function verifyClaimsDeep(draft, evidence, { nli = null, minSupport
       assessments.push({ ...assessment, status: "CONTRADICTED", reason: "Semantic verifier detected contradiction with cited evidence" });
     } else if (passed) {
       assessments.push({ ...assessment, reason: "Bound evidence passed deterministic + semantic truth checks", method: "semantic+deterministic" });
-    } else if (unavailableReason && !requireSemantic) {
+    } else if (completed === 0 && unavailableReason && !requireSemantic) {
       assessments.push({ ...assessment, reason: `${assessment.reason} (semantic gate unavailable: ${unavailableReason})` });
     } else {
-      assessments.push({ ...assessment, status: "UNSUPPORTED", reason: unavailableReason ? `Semantic verification required but unavailable: ${unavailableReason}` : "Semantic entailment is below release threshold" });
+      assessments.push({ ...assessment, status: "UNSUPPORTED", reason: completed === 0 && unavailableReason ? `Semantic verification required but unavailable: ${unavailableReason}` : "Semantic entailment is below release threshold" });
     }
   }
   return { ...summarize(assessments), semantic: typeof nli === "function" ? "applied" : "required-unavailable" };
@@ -91,8 +95,9 @@ function assessStatement(statement, indexed, minSupport) {
   let contradicted = false;
   let strongest = 0;
   let reason = "Insufficient support";
+  const supportingIds = [];
 
-  for (const source of sources) {
+  for (const [position, source] of sources.entries()) {
     const sanitized = sanitizeEvidence(source.content);
     const effective = sanitized.quarantined ? 0 : effectiveStrength(source);
     if (effective <= 0 || !sanitized.text) {
@@ -115,12 +120,14 @@ function assessStatement(statement, indexed, minSupport) {
       reason = "Claim polarity conflicts with evidence";
       continue;
     }
-    strongest = Math.max(strongest, wholeOverlap * effective);
+    const support = wholeOverlap * effective;
+    if (support >= minSupport) supportingIds.push(sourceIds[position]);
+    strongest = Math.max(strongest, support);
   }
 
   if (contradicted) return { text: statement, status: "CONTRADICTED", sourceIds, reason };
   if (strongest >= minSupport) {
-    return { text: statement, status: "SUPPORTED", sourceIds, reason: "Bound evidence passed deterministic truth checks", method: "deterministic", support: round(strongest) };
+    return { text: statement, status: "SUPPORTED", sourceIds, supportingIds, reason: "Bound evidence passed deterministic truth checks", method: "deterministic", support: round(strongest) };
   }
   return { text: statement, status: "UNSUPPORTED", sourceIds, reason, support: round(strongest) };
 }

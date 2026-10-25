@@ -180,13 +180,13 @@ async function readTip(db) {
 
 /** Deletes memories whose content contains every query word (or matches the id). Returns the count removed. */
 export async function forgetMemory(query) {
-  const terms = tokenize(query);
+  const terms = deletionTerms(query);
   const id = String(query).trim();
   const db = await openDb();
   let removed = [];
   try {
     const all = await requestResult(db.transaction("memory", "readonly").objectStore("memory").getAll());
-    removed = all.filter((item) => item.id === id || (terms.size > 0 && score(terms, item.content) === terms.size)).map((item) => item.id);
+    removed = all.filter((item) => item.id === id || matchesEveryWord(terms, item.content)).map((item) => item.id);
   } finally {
     db.close();
   }
@@ -221,6 +221,21 @@ export async function verifyAuditChain() {
   } finally {
     db.close();
   }
+}
+
+/**
+ * Deletion matching keeps every word (including one- and two-character ones) and
+ * compares whole words, so "forget project X" never also deletes "Project Y".
+ */
+export function deletionTerms(value) {
+  return new Set(String(value).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+}
+
+export function matchesEveryWord(terms, text) {
+  if (!terms.size) return false;
+  const words = deletionTerms(text);
+  for (const term of terms) if (!words.has(term)) return false;
+  return true;
 }
 
 function tokenize(value) {

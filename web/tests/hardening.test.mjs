@@ -221,3 +221,55 @@ test("guarded transport rejects reserved destinations without crashing", async (
     await assert.rejects(guardedPost(url, { body: "{}" }), url);
   }
 });
+
+// ---------- review regressions (PR #9) ----------
+
+test("unrelated co-citation cannot override a completed semantic rejection", async () => {
+  const evidence = [
+    { id: "s1", content: "Alice sold the car to Bob.", trust: 1 },
+    { id: "s2", content: "The weather was mild in spring.", trust: 1 },
+  ];
+  const judge = async (claim, premise) => premise.includes("Alice")
+    ? { available: true, entailment: 0.05, contradiction: 0.1, provider: "fixture" }
+    : { available: false, reason: "offline" };
+  const alone = await verifyClaimsDeep("Bob sold the car to Alice [S1].", evidence, { nli: judge });
+  assert.equal(alone.released, 0);
+  const withUnrelated = await verifyClaimsDeep("Bob sold the car to Alice [S1][S2].", evidence, { nli: judge });
+  assert.equal(withUnrelated.released, 0);
+});
+
+test("supporting sources are recorded per claim", () => {
+  const evidence = [
+    { id: "s1", content: "Unrelated text about cooking pasta.", trust: 1 },
+    { id: "s2", content: "The project codename is Orion.", trust: 1 },
+  ];
+  const claim = verifyClaims("The project codename is Orion [S1][S2].", evidence).claims[0];
+  assert.deepEqual(claim.supportingIds, ["S2"]);
+});
+
+test("guarded transport enforces an absolute deadline against trickling responses", async () => {
+  const https = await import("node:https");
+  const { guardedPost } = await import("../src/netguard.mjs");
+  // Drive the deadline path deterministically by stubbing the request object.
+  const realRequest = https.default.request;
+  const { EventEmitter } = await import("node:events");
+  https.default.request = (_options, onResponse) => {
+    const request = new EventEmitter();
+    request.destroy = (error) => setImmediate(() => request.emit("error", error));
+    request.end = () => {
+      const response = new EventEmitter();
+      response.statusCode = 200;
+      onResponse(response);
+      const timer = setInterval(() => response.emit("data", Buffer.from(".")), 5);
+      request.on("error", () => clearInterval(timer));
+    };
+    return request;
+  };
+  try {
+    const started = Date.now();
+    await assert.rejects(guardedPost("https://api.example.com/v1", { body: "{}", timeoutMs: 60 }), /timed out/i);
+    assert.ok(Date.now() - started < 1000);
+  } finally {
+    https.default.request = realRequest;
+  }
+});

@@ -118,7 +118,7 @@ class TruthCoreStore(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
     }
 
     override fun forgetMemory(query: String): Int = synchronized(writeLock) {
-        val terms = RepositorySupport.tokenize(query)
+        val terms = RepositorySupport.deletionTerms(query)
         val ids = mutableListOf<String>()
         readableDatabase.query("memory", arrayOf("id", "content"), null, null, null, null, null).use { c ->
             while (c.moveToNext()) {
@@ -163,7 +163,7 @@ class TruthCoreStore(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
     }
 
     override fun forgetKnowledge(query: String): Int = synchronized(writeLock) {
-        val terms = RepositorySupport.tokenize(query)
+        val terms = RepositorySupport.deletionTerms(query)
         val ids = mutableListOf<String>()
         readableDatabase.query("knowledge", arrayOf("id", "label", "content"), null, null, null, null, null).use { c ->
             while (c.moveToNext()) {
@@ -264,12 +264,16 @@ class TruthCoreStore(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
 
     override fun close() = super<SQLiteOpenHelper>.close()
 
-    /** SQL prefilter: any term may match; final scoring happens in Kotlin. */
+    /**
+     * SQL prefilter: any term may match; final scoring happens in Kotlin. Every term is
+     * kept so no candidate is dropped; very long queries skip the prefilter rather than
+     * exceed SQLite's bound-parameter limit.
+     */
     private fun likeFilter(terms: Set<String>, columns: List<String>): Pair<String?, Array<String>?> {
-        if (terms.isEmpty()) return null to null
+        if (terms.isEmpty() || terms.size * columns.size > MAX_LIKE_PARAMS) return null to null
         val clauses = mutableListOf<String>()
         val args = mutableListOf<String>()
-        terms.take(12).forEach { term ->
+        terms.forEach { term ->
             columns.forEach { column ->
                 clauses += "LOWER($column) LIKE ? ESCAPE '\\'"
                 args += "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -301,5 +305,6 @@ class TruthCoreStore(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
     companion object {
         private const val DB_NAME = "truthcore.db"
         private const val DB_VERSION = 2
+        private const val MAX_LIKE_PARAMS = 500
     }
 }

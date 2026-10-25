@@ -57,8 +57,15 @@ internal object RepositorySupport {
         return terms.count(lower::contains)
     }
 
-    /** All query terms must appear for a destructive match, so short queries cannot wipe unrelated rows. */
-    fun matchesAll(terms: Set<String>, text: String): Boolean = terms.isNotEmpty() && score(terms, text) == terms.size
+    /**
+     * Deletion terms keep every word, including one- and two-character ones, so
+     * "forget project X" stays as narrow as the user asked.
+     */
+    fun deletionTerms(value: String): Set<String> =
+        value.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotBlank() }.toSet()
+
+    /** Every deletion term must appear as a whole word; substrings never count. */
+    fun matchesAll(terms: Set<String>, text: String): Boolean = terms.isNotEmpty() && deletionTerms(text).containsAll(terms)
 
     fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
@@ -94,7 +101,7 @@ class InMemoryTruthCoreRepository : TruthCoreRepository {
     }
 
     override fun forgetMemory(query: String): Int = synchronized(lock) {
-        val terms = RepositorySupport.tokenize(query)
+        val terms = RepositorySupport.deletionTerms(query)
         val ids = memory.values.filter { it.id == query.trim() || RepositorySupport.matchesAll(terms, it.content) }.map { it.id }
         ids.forEach(memory::remove)
         ids.size
@@ -116,7 +123,7 @@ class InMemoryTruthCoreRepository : TruthCoreRepository {
     }
 
     override fun forgetKnowledge(query: String): Int = synchronized(lock) {
-        val terms = RepositorySupport.tokenize(query)
+        val terms = RepositorySupport.deletionTerms(query)
         val ids = knowledge.values.filter { it.id == query.trim() || RepositorySupport.matchesAll(terms, it.label + " " + it.content) }.map { it.id }
         ids.forEach(knowledge::remove)
         ids.size
