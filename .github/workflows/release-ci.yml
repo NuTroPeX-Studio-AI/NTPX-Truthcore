@@ -29,7 +29,7 @@ jobs:
       - name: Upload Android release candidate
         uses: actions/upload-artifact@v4
         with:
-          name: ntpx-truthcore-android-v1.0.0-rc1-unsigned
+          name: ntpx-truthcore-android-v1.1.0-unsigned
           path: |
             app/build/outputs/apk/release/*.apk
             app/build/outputs/bundle/release/*.aab
@@ -47,12 +47,12 @@ jobs:
         working-directory: web
         run: npm run check
       - name: Build deployment container
-        run: docker build -t ntpx-truthcore-web:1.0.0-rc1 ./web
+        run: docker build -t ntpx-truthcore-web:1.1.0 ./web
       - name: Package deployment source
-        run: tar -czf ntpx-truthcore-web-v1.0.0-rc1.tgz web
+        run: tar -czf ntpx-truthcore-web-v1.1.0.tgz web
       - name: Upload web release candidate
         uses: actions/upload-artifact@v4
         with:
-          name: ntpx-truthcore-web-v1.0.0-rc1
-          path: ntpx-truthcore-web-v1.0.0-rc1.tgz
+          name: ntpx-truthcore-web-v1.1.0
+          path: ntpx-truthcore-web-v1.1.0.tgz
           if-no-files-found: error

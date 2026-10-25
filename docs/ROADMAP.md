@@ -48,6 +48,15 @@
   - [x] Android and Web version alignment
   - [x] explicit deployment/security boundary documentation
 
+- [x] v1.1.0 hardening + verification backends
+  - [x] connect-time SSRF / DNS-rebinding guard and API rate limiting (web)
+  - [x] evidence-packet sanitization (Android) and sanitized MCP results
+  - [x] ClaimLock correctness fixes + shared Kotlin/JS conformance suite
+  - [x] additive NLI judge gate and embedding evidence ranking (both platforms)
+  - [x] shared process runtime, ViewModel UI, speakable approval codes, approval-gated forget
+  - [x] atomic audit chains on both platforms
+  - [x] MCP legacy-initialize fallback
+
 ## External deployment / runtime validation gates
 
 These are intentionally **not** marked complete by source code alone:
@@ -59,7 +68,7 @@ These are intentionally **not** marked complete by source code alone:
 - [ ] custom domain + production HTTPS/DNS
 - [ ] live web-provider validation on the production HTTPS origin
 - [ ] optional on-device generative model adapter + model asset selected and installed
-- [ ] optional on-device embedding/NLI model adapter + model assets selected and installed
+- [ ] optional on-device embedding/NLI model adapter + model assets selected and installed (remote OpenAI-compatible backends ship in v1.1.0)
 - [ ] production Android keystore / signing secrets configured outside Git
 - [ ] signed production AAB/APK generated
 - [ ] Play Store / distribution review and release
