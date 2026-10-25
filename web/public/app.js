@@ -1,11 +1,16 @@
 import {
   addKnowledge,
+  appendAudit,
   evidenceFor,
+  forgetMemory,
+  memoryCount,
   remember,
   searchKnowledge,
   searchMemory,
   verifyAuditChain,
 } from "/store.js";
+
+const WRITE_TOOLS = new Set(["memory.remember", "memory.forget", "knowledge.add"]);
 
 const elements = {
   messages: document.querySelector("#messages"),
@@ -25,6 +30,10 @@ const elements = {
   disconnect: document.querySelector("#disconnectButton"),
   settingsStatus: document.querySelector("#settingsStatus"),
   install: document.querySelector("#installButton"),
+  nli: document.querySelector("#nliToggle"),
+  nliModel: document.querySelector("#nliModelInput"),
+  requireSemantic: document.querySelector("#requireSemanticToggle"),
+  embeddingModel: document.querySelector("#embeddingModelInput"),
 };
 
 const state = {
@@ -35,7 +44,7 @@ const state = {
   pending: new Map(),
 };
 
-addMessage("TruthCore", "TruthCore Web v1 runtime is ready. ClaimLock, persistent local memory/knowledge, bounded browser tools, multi-agent review, and the local audit chain are active. Connect a model for open-ended reasoning.", "LOCAL");
+addMessage("TruthCore", "TruthCore Web runtime is ready. ClaimLock, persistent local memory/knowledge, bounded browser tools, multi-agent review, and the local audit chain are active. Connect a model for open-ended reasoning.", "LOCAL");
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
@@ -75,7 +84,10 @@ elements.test.addEventListener("click", async () => {
     state.provider = candidate;
     elements.apiKey.value = "";
     elements.providerPill.textContent = `Provider: ${candidate.model}`;
-    elements.settingsStatus.textContent = "Connected for this tab. The API key is held in runtime memory only.";
+    const embeddingNote = result.embedding
+      ? (result.embedding.available ? " Embedding ranking is available." : ` Embedding ranking unavailable: ${result.embedding.reason}`)
+      : "";
+    elements.settingsStatus.textContent = `Connected for this tab. The API key is held in runtime memory only.${embeddingNote}`;
   } catch (error) {
     state.provider = null;
     elements.providerPill.textContent = "Provider: local only";
@@ -128,11 +140,11 @@ async function submit() {
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ message, provider: state.provider, clientEvidence }),
+      body: JSON.stringify({ message, provider: providerWithVerification(), verification: verificationSettings(), clientEvidence }),
     });
     const reply = await response.json();
     if (!response.ok) throw new Error(reply.error || "TruthCore request failed");
-    addMessage("TruthCore", reply.text, reply.status || "LOCAL");
+    addMessage("TruthCore", reply.text, reply.status || "LOCAL", false, reply.claims);
     if (elements.speak.checked) speak(reply.text);
   } catch (error) {
     addMessage("TruthCore", error.message || "The request failed.", "PROVIDER_ERROR");
@@ -155,6 +167,20 @@ async function handleLocalCommand(message) {
   if (lower.startsWith("approve ")) {
     return executeApproval(message.slice(8).trim());
   }
+  if (["deny", "deny all", "cancel", "cancel approvals", "reject"].includes(lower)) {
+    const count = state.pending.size;
+    state.pending.clear();
+    await appendAudit("approval.cancelled", String(count));
+    return { text: count ? `Cancelled ${count} pending approval${count === 1 ? "" : "s"}.` : "There are no pending approvals.", status: "ACTION_DENIED" };
+  }
+  if (lower.startsWith("forget ") && !lower.startsWith("forget knowledge")) {
+    const query = message.slice(7).replace(/^(about|that)\s+/i, "").trim();
+    return proposeWrite({ tool: "memory.forget", args: { query } });
+  }
+  if (lower === "memory count" || lower === "how many memories") {
+    const count = await memoryCount();
+    return { text: `${count} saved memor${count === 1 ? "y" : "ies"} in this browser.`, status: "LOCAL" };
+  }
   if (lower.startsWith("what do you remember about ") || lower.startsWith("search memory for ")) {
     const query = lower.startsWith("what do you remember about ") ? message.slice(27).trim() : message.slice(18).trim();
     const rows = await searchMemory(query);
@@ -169,33 +195,80 @@ async function handleLocalCommand(message) {
     return { text: valid ? "The browser-local TruthCore audit hash chain is internally consistent." : "The browser-local TruthCore audit hash chain failed verification.", status: valid ? "LOCAL" : "ALERT" };
   }
   if (lower === "list tools" || lower === "tools") {
-    return { text: "clock.now [READ_ONLY]\nmemory.search [READ_ONLY]\nknowledge.search [READ_ONLY]\nmemory.remember [WRITE_LOCAL]\nknowledge.add [WRITE_LOCAL]", status: "LOCAL" };
+    return { text: "clock.now [READ_ONLY]\nmemory.search [READ_ONLY]\nknowledge.search [READ_ONLY]\nmemory.remember [WRITE_LOCAL]\nmemory.forget [WRITE_LOCAL]\nknowledge.add [WRITE_LOCAL]", status: "LOCAL" };
   }
   return null;
+}
+
+const APPROVAL_TTL_MS = 5 * 60 * 1000;
+
+/** Six-digit, single-use, five-minute approval code bound to one exact call (speakable for voice use). */
+function newApprovalCode() {
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    const value = crypto.getRandomValues(new Uint32Array(1))[0] % 900000 + 100000;
+    const code = String(value);
+    if (!state.pending.has(code)) return code;
+  }
+  return crypto.randomUUID();
 }
 
 function proposeWrite(call) {
   if (!Object.values(call.args).some((value) => String(value).trim())) {
     return { text: "The requested write is empty.", status: "ACTION_FAILED" };
   }
-  const token = crypto.randomUUID();
-  state.pending.set(token, call);
-  return { text: `Approval required for ${call.tool}. Type or say: approve ${token}`, status: "APPROVAL_REQUIRED" };
+  const now = Date.now();
+  for (const [code, entry] of state.pending) if (entry.expiresAt <= now) state.pending.delete(code);
+  const code = newApprovalCode();
+  state.pending.set(code, { call, expiresAt: now + APPROVAL_TTL_MS });
+  const preview = Object.entries(call.args).map(([key, value]) => `${key}="${String(value).slice(0, 60)}${String(value).length > 60 ? "…" : ""}"`).join(", ");
+  return { text: `Approval required for ${call.tool}${preview ? ` (${preview})` : ""}. Type or say: approve ${code}`, status: "APPROVAL_REQUIRED" };
 }
 
-async function executeApproval(token) {
-  const call = state.pending.get(token);
-  if (!call) return { text: "No pending action for that approval token.", status: "ACTION_DENIED" };
-  state.pending.delete(token);
-  if (call.tool === "memory.remember") {
-    const record = await remember(call.args.content);
-    return { text: `Saved memory ${record.id}.`, status: "ACTION_EXECUTED" };
+async function executeApproval(rawCode) {
+  const code = String(rawCode).replace(/[\s-]/g, "");
+  const entry = state.pending.get(code);
+  state.pending.delete(code);
+  if (!entry || entry.expiresAt <= Date.now()) return { text: "No pending action for that approval code.", status: "ACTION_DENIED" };
+  const { call } = entry;
+  const fingerprint = `${call.tool}|${Object.entries(call.args).sort().map(([k, v]) => `${k}=${v}`).join("|")}`;
+  try {
+    let text;
+    if (call.tool === "memory.remember") {
+      const record = await remember(call.args.content);
+      text = `Saved memory ${record.id}.`;
+    } else if (call.tool === "memory.forget") {
+      const removed = await forgetMemory(call.args.query);
+      text = removed ? `Deleted ${removed} memor${removed === 1 ? "y" : "ies"}.` : "No memory matched.";
+    } else if (call.tool === "knowledge.add") {
+      const record = await addKnowledge(call.args.label, call.args.content);
+      text = `Saved knowledge ${record.id}.`;
+    } else {
+      return { text: "The pending tool is no longer allowed.", status: "ACTION_DENIED" };
+    }
+    await appendAudit("tool.executed", `${fingerprint}|${text}`);
+    return { text, status: "ACTION_EXECUTED" };
+  } catch (error) {
+    await appendAudit("tool.failed", fingerprint).catch(() => {});
+    return { text: `Tool failed: ${error.message || "unknown error"}`, status: "ACTION_FAILED" };
   }
-  if (call.tool === "knowledge.add") {
-    const record = await addKnowledge(call.args.label, call.args.content);
-    return { text: `Saved knowledge ${record.id}.`, status: "ACTION_EXECUTED" };
-  }
-  return { text: "The pending tool is no longer allowed.", status: "ACTION_DENIED" };
+}
+
+function verificationSettings() {
+  return {
+    nli: Boolean(elements.nli?.checked),
+    requireSemantic: Boolean(elements.nli?.checked && elements.requireSemantic?.checked),
+  };
+}
+
+function providerWithVerification() {
+  if (!state.provider) return null;
+  const nliModel = elements.nliModel?.value.trim();
+  const embeddingModel = elements.embeddingModel?.value.trim();
+  return {
+    ...state.provider,
+    ...(nliModel ? { nliModel } : {}),
+    ...(embeddingModel ? { embeddingModel } : {}),
+  };
 }
 
 async function runTeam(goal) {
@@ -224,7 +297,7 @@ async function runAgent(task) {
 
   const results = [];
   for (const call of calls) {
-    if (["memory.remember", "knowledge.add"].includes(call.tool)) return proposeWrite(call);
+    if (WRITE_TOOLS.has(call.tool)) return proposeWrite(call);
     const result = await executeReadOnlyTool(call);
     if (!result.ok) return { text: result.output, status: "ACTION_FAILED" };
     results.push(`${call.tool}: ${result.output}`);
@@ -275,14 +348,16 @@ async function executeReadOnlyTool(call) {
 }
 
 function readProviderForm() {
+  const embeddingModel = elements.embeddingModel?.value.trim();
   return {
     baseUrl: elements.baseUrl.value.trim(),
     model: elements.model.value.trim(),
     apiKey: elements.apiKey.value,
+    ...(embeddingModel ? { embeddingModel } : {}),
   };
 }
 
-function addMessage(speaker, text, status, user = false) {
+function addMessage(speaker, text, status, user = false, claims = null) {
   const article = document.createElement("article");
   article.className = `message ${user ? "user" : "truthcore"}`;
   const meta = document.createElement("div");
@@ -300,8 +375,31 @@ function addMessage(speaker, text, status, user = false) {
   body.className = "message-text";
   body.textContent = text;
   article.append(meta, body);
+  if (Array.isArray(claims) && claims.length) article.append(claimAudit(claims));
   elements.messages.append(article);
   elements.messages.scrollTop = elements.messages.scrollHeight;
+}
+
+function claimAudit(claims) {
+  const details = document.createElement("details");
+  details.className = "claim-audit";
+  const summary = document.createElement("summary");
+  summary.textContent = `Claim audit (${claims.length})`;
+  const list = document.createElement("ul");
+  for (const claim of claims.slice(0, 40)) {
+    const item = document.createElement("li");
+    const status = document.createElement("span");
+    status.className = "claim-status";
+    status.textContent = [claim.status, (claim.sourceIds || []).join(", "), claim.method].filter(Boolean).join(" · ");
+    const claimText = document.createElement("div");
+    claimText.textContent = claim.text;
+    const reason = document.createElement("div");
+    reason.textContent = claim.reason;
+    item.append(status, claimText, reason);
+    list.append(item);
+  }
+  details.append(summary, list);
+  return details;
 }
 
 function setBusy(value) {

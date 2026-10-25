@@ -101,3 +101,57 @@ function cosine(a, b) {
   if (!aa || !bb) return Number.NaN;
   return dot / (Math.sqrt(aa) * Math.sqrt(bb));
 }
+
+/**
+ * Wraps an embedding provider with a bounded LRU cache keyed by text.
+ */
+export function cachedEmbedder(provider, maxEntries = 512) {
+  if (typeof provider !== "function") return null;
+  const cache = new Map();
+  return async (text) => {
+    const key = String(text);
+    if (cache.has(key)) {
+      const hit = cache.get(key);
+      cache.delete(key);
+      cache.set(key, hit);
+      return hit;
+    }
+    const result = await provider(key);
+    if (result?.available) {
+      cache.set(key, result);
+      if (cache.size > maxEntries) cache.delete(cache.keys().next().value);
+    }
+    return result;
+  };
+}
+
+/**
+ * Re-orders evidence by cosine similarity to the query. Ranking only changes
+ * which evidence reaches the model; it never decides whether a claim is
+ * released. Falls back to the original order when embeddings are unavailable.
+ */
+export async function rerankByEmbedding(query, evidence, provider, { concurrency = 4 } = {}) {
+  const items = Array.isArray(evidence) ? evidence : [];
+  if (typeof provider !== "function" || items.length < 2) return items;
+  const queryVector = await provider(String(query));
+  if (!queryVector?.available || !Array.isArray(queryVector.values)) return items;
+
+  const scores = new Array(items.length).fill(Number.NEGATIVE_INFINITY);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      const item = items[index];
+      const vector = await provider(`${item.label || ""}: ${item.content || ""}`).catch(() => null);
+      const score = vector?.available ? cosine(queryVector.values, vector.values) : Number.NaN;
+      if (Number.isFinite(score)) scores[index] = score;
+    }
+  });
+  await Promise.all(workers);
+  return items
+    .map((item, index) => ({ item, index, score: scores[index] }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map(({ item }) => item);
+}
+
+export { cosine };

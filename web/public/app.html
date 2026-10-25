@@ -61,6 +61,17 @@
       <label>API key
         <input id="apiKeyInput" type="password" autocomplete="off" placeholder="Held in this tab only">
       </label>
+      <fieldset class="settings-group">
+        <legend>Verification backends</legend>
+        <label class="inline-check"><input id="nliToggle" type="checkbox"> Semantic NLI gate (can only withhold, never release)</label>
+        <label>Judge model <span class="hint">(blank = same model; a different model is more independent)</span>
+          <input id="nliModelInput" type="text" autocomplete="off" placeholder="optional">
+        </label>
+        <label class="inline-check"><input id="requireSemanticToggle" type="checkbox"> Require semantic pass</label>
+        <label>Embedding model for evidence ranking <span class="hint">(optional)</span>
+          <input id="embeddingModelInput" type="text" autocomplete="off" placeholder="optional">
+        </label>
+      </fieldset>
       <p class="settings-note">The browser does not write the API key to localStorage, cookies, or the service-worker cache. The server only proxies hosts explicitly allowed by the deployment operator.</p>
       <div id="settingsStatus" class="settings-status">Not connected.</div>
       <div class="settings-actions">
