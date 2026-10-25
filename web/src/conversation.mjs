@@ -1,7 +1,8 @@
-import { verifyClaims } from "./claimlock.mjs";
+import { verifyClaims, verifyClaimsDeep } from "./claimlock.mjs";
 import { effectiveStrength, sanitizeEvidence } from "./evidence.mjs";
+import { rerankByEmbedding } from "./semantic.mjs";
 
-export const WEB_VERSION = "1.0.0-rc1";
+export const WEB_VERSION = "1.1.0";
 
 export const localEvidence = [
   {
@@ -27,11 +28,21 @@ export const localEvidence = [
   },
 ];
 
-export async function respond(input, { provider = null, evidence = [] } = {}) {
+/**
+ * @param {string} input
+ * @param {object} options
+ * @param {Function|null} options.provider chat provider
+ * @param {Array} options.evidence client evidence (already sanitized by the server boundary)
+ * @param {Function|null} options.nli optional NLI provider; strictly additive gate
+ * @param {Function|null} options.embed optional embedding provider used to rank evidence
+ * @param {boolean} options.requireSemantic withhold claims when the NLI gate is unavailable
+ */
+export async function respond(input, { provider = null, evidence = [], nli = null, embed = null, requireSemantic = false } = {}) {
   const request = String(input ?? "").trim();
   if (!request) return { text: "Enter or speak a request first.", verified: true, status: "LOCAL" };
 
-  const boundEvidence = combineEvidence(evidence);
+  const ranked = typeof embed === "function" ? await rerankByEmbedding(request, evidence, embed).catch(() => evidence) : evidence;
+  const boundEvidence = combineEvidence(ranked);
   const local = localReply(request, Boolean(provider), boundEvidence);
   if (local) return local;
 
@@ -47,7 +58,7 @@ export async function respond(input, { provider = null, evidence = [] } = {}) {
 
   return isGenerativeRequest(request)
     ? generateNonFactual(request, provider)
-    : generateEvidenceBound(request, provider, boundEvidence);
+    : generateEvidenceBound(request, provider, boundEvidence, { nli, requireSemantic });
 }
 
 function combineEvidence(extra) {
@@ -107,7 +118,7 @@ async function generateNonFactual(request, provider) {
   return { text: result.text, verified: false, status: "GENERATED" };
 }
 
-async function generateEvidenceBound(request, provider, evidence) {
+async function generateEvidenceBound(request, provider, evidence, gate = {}) {
   const evidencePacket = evidence.map((item, index) => {
     const sanitized = sanitizeEvidence(item.content);
     return `[S${index + 1}] ${String(item.label || "Evidence").slice(0, 180)}: ${sanitized.text}`;
@@ -128,18 +139,28 @@ async function generateEvidenceBound(request, provider, evidence) {
     temperature: 0,
   });
   if (!result?.success) return providerFailure(result?.error);
+  if (typeof gate.nli === "function" || gate.requireSemantic) {
+    const locked = await verifyClaimsDeep(result.text, evidence, { nli: gate.nli, requireSemantic: gate.requireSemantic });
+    return releaseLocked(locked);
+  }
   return releaseVerifiedDraft(result.text, evidence);
 }
 
 function releaseVerifiedDraft(draft, evidence) {
-  const locked = verifyClaims(draft, evidence);
+  return releaseLocked(verifyClaims(draft, evidence));
+}
+
+function releaseLocked(locked) {
   const onlySupportedFacts = locked.claims.length > 0 && locked.claims.every((claim) => claim.status === "SUPPORTED" || claim.status === "PROPOSAL");
   const hasUnknown = locked.claims.some((claim) => claim.status === "UNKNOWN");
   const text = hasUnknown ? locked.answer.replace(/^UNKNOWN:\s*/i, "") : locked.answer;
+  const verified = onlySupportedFacts && locked.withheld === 0;
   return {
     text,
-    verified: onlySupportedFacts && locked.withheld === 0,
-    status: onlySupportedFacts && locked.withheld === 0 ? "VERIFIED" : "ABSTAINED",
+    verified,
+    status: verified ? "VERIFIED" : "ABSTAINED",
+    claims: locked.claims.map(({ text: claimText, status, sourceIds, reason, method }) => ({ text: claimText, status, sourceIds, reason, method })),
+    ...(locked.semantic ? { semantic: locked.semantic } : {}),
   };
 }
 

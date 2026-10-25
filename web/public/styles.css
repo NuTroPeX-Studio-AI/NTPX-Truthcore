@@ -111,3 +111,14 @@ button { cursor: pointer; }
   .composer-actions .button { flex: 1; }
   .switch-label { width: 100%; margin: 4px 0 0; }
 }
+
+.settings-group { margin: 18px 0 4px; padding: 6px 14px 14px; border: 1px solid var(--line); border-radius: 14px; }
+.settings-group legend { padding: 0 6px; color: var(--accent-2); font-size: .74rem; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+.settings-card label.inline-check { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.settings-card label.inline-check input { width: auto; }
+.hint { color: var(--muted); font-weight: 500; }
+.claim-audit { margin-top: 10px; font-size: .82rem; color: var(--muted); }
+.claim-audit summary { cursor: pointer; color: var(--accent-2); font-weight: 700; }
+.claim-audit ul { margin: 8px 0 0; padding-left: 18px; }
+.claim-audit li { margin: 6px 0; line-height: 1.45; }
+.claim-audit .claim-status { font-weight: 800; letter-spacing: .04em; }

@@ -1,6 +1,6 @@
 package com.ntpx.truthcore.core
 
 object TruthCoreVersion {
-    const val VERSION = "1.0.0-rc1"
+    const val VERSION = "1.1.0"
     const val PLATFORM = "android"
 }

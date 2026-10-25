@@ -2,7 +2,7 @@
 
 TruthCore is considered **source-complete** when Android and Web can run the core product behaviors under explicit trust boundaries: persistent memory, evidence retrieval, deterministic and optional semantic verification, model-backed conversation, bounded agent planning, permissioned tools, approval/audit controls, and repeatable CI/release packaging.
 
-## v1.0.0-rc1 source status
+## v1.1.0 source status
 
 | Capability | Android | Web |
 |---|---|---|
@@ -13,9 +13,10 @@ TruthCore is considered **source-complete** when Android and Web can run the cor
 | Persistent memory | SQLite | IndexedDB |
 | Local knowledge retrieval / RAG | complete | complete |
 | ClaimLock deterministic gate | complete | complete |
-| Semantic/NLI adapter contract | complete | complete |
-| Embedding adapter contract | complete | complete |
-| Temporal/contradiction primitives | complete | framework available on Android |
+| Semantic/NLI gate (model-judge backend) | complete | complete |
+| Embedding evidence ranking backend | complete | complete |
+| Cross-platform ClaimLock conformance | complete | complete |
+| Temporal/contradiction primitives | complete | Android only |
 | Bounded agent planning | complete | complete |
 | Approval-gated writes | complete | complete |
 | Hash-chained audit | complete | complete |

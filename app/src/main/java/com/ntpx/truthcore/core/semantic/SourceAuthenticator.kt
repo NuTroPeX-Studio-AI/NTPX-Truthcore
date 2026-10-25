@@ -20,6 +20,10 @@ object SourceAuthenticator {
             return SourceAuthResult(false, "Remote source is not HTTPS-authenticated")
         }
         if (parsed.host.isNullOrBlank()) return SourceAuthResult(false, "Source URI has no host")
-        return SourceAuthResult(true, "HTTPS source and content digest passed structural authentication")
+        return SourceAuthResult(
+            true,
+            if (expectedHash != null) "HTTPS source and content digest passed structural authentication"
+            else "HTTPS source passed structural authentication (no content digest supplied)",
+        )
     }
 }

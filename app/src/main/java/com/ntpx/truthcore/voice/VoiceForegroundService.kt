@@ -33,11 +33,12 @@ class VoiceForegroundService : Service(), RecognitionListener, TextToSpeech.OnIn
     private var ttsReady = false
     private var pendingSpeech: String? = null
     private var stopped = false
+    private var awaitingCommandUntil = 0L
     private lateinit var runtime: TruthCoreRuntime
 
     override fun onCreate() {
         super.onCreate()
-        runtime = TruthCoreRuntime(applicationContext)
+        runtime = TruthCoreRuntime.get(applicationContext)
         createChannel()
         tts = TextToSpeech(this, this)
         if (SpeechRecognizer.isRecognitionAvailable(this)) {
@@ -105,21 +106,37 @@ class VoiceForegroundService : Service(), RecognitionListener, TextToSpeech.OnIn
 
     override fun onResults(results: Bundle?) {
         val transcript = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty().trim()
-        val command = extractWakeCommand(transcript)
+        val followUp = android.os.SystemClock.uptimeMillis() < awaitingCommandUntil
+        val command = extractWakeCommand(transcript) ?: transcript.takeIf { followUp && it.isNotBlank() }
         if (command == null) {
             scheduleRestart(250)
             return
         }
         if (command.isBlank()) {
+            // Wake phrase alone: accept the next utterance as a command without repeating it.
+            awaitingCommandUntil = android.os.SystemClock.uptimeMillis() + FOLLOW_UP_WINDOW_MS
             speak("Yes?")
             return
         }
+        awaitingCommandUntil = 0L
 
         runCatching { recognizer?.cancel() }
         executor.execute {
-            val reply = runtime.respond(command, ModelSession.provider)
-            main.post { speak(reply.text) }
+            val reply = runCatching { runtime.respond(normalizeSpokenApproval(command), ModelSession.provider) }
+                .getOrNull()
+            main.post { speak(reply?.text ?: "That request failed.") }
         }
+    }
+
+    /** "approve one two three four five six" → "approve 123456" so approval codes work hands-free. */
+    private fun normalizeSpokenApproval(command: String): String {
+        if (!command.lowercase(Locale.ROOT).startsWith("approve")) return command
+        val words = mapOf("zero" to "0", "oh" to "0", "one" to "1", "two" to "2", "to" to "2", "too" to "2", "three" to "3",
+            "four" to "4", "for" to "4", "five" to "5", "six" to "6", "seven" to "7", "eight" to "8", "nine" to "9")
+        val digits = command.substringAfter(' ', "").split(Regex("[\\s,.-]+")).joinToString("") { token ->
+            words[token.lowercase(Locale.ROOT)] ?: token.filter(Char::isDigit)
+        }
+        return if (digits.isNotBlank()) "approve $digits" else command
     }
 
     private fun extractWakeCommand(transcript: String): String? {
@@ -195,7 +212,6 @@ class VoiceForegroundService : Service(), RecognitionListener, TextToSpeech.OnIn
         tts?.stop()
         tts?.shutdown()
         tts = null
-        runtime.close()
         executor.shutdownNow()
         super.onDestroy()
     }
@@ -222,6 +238,7 @@ class VoiceForegroundService : Service(), RecognitionListener, TextToSpeech.OnIn
         private const val CHANNEL_ID = "truthcore_voice"
         private const val NOTIFICATION_ID = 1001
         private const val UTTERANCE_ID = "truthcore-hands-free"
+        private const val FOLLOW_UP_WINDOW_MS = 8_000L
         private val RESTART_TOKEN = Any()
     }
 }
